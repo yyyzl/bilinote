@@ -1,0 +1,80 @@
+# Dependencies
+node_modules/
+
+# Build outputs
+dist/
+build/
+*.apk
+*.idsig
+*.aab
+*.ipa
+*.dmg
+*.app/
+
+# Android signing (NEVER commit)
+*.jks
+*.keystore
+key.properties
+keystore.properties
+
+# Rust / Tauri
+target/
+target-test/
+*.rustc_info.json
+*.pdb
+*.rlib
+*.rmeta
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Environment
+.env
+.env.local
+.env.*.local
+
+# Cache
+.vite/
+.cache/
+*.tsbuildinfo
+
+# Android generated
+**/gen/android/
+*.keystore
+
+# Temporary files
+*.tmp
+*.temp
+
+# === Claude Code 本地配置 ===
+.claude/settings.local.json
+.claude/settings.json.bak
+
+# === Fusion 本地恢复状态 ===
+.fusion/recovery.json
+.fusion/handoff.md
+.fusion/events.jsonl
+
+# === GitNexus 知识图谱（本地产物） ===
+.gitnexus/
+
+# === Trellis 个人文件 ===
+.trellis/.developer
+
+# === Git 历史备份（本地保留，不入库） ===
+.git.backup-*/
+.git.backup-*

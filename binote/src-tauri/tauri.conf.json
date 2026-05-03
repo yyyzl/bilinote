@@ -1,0 +1,37 @@
+{
+  "productName": "BiNote",
+  "version": "0.1.0",
+  "identifier": "com.binote.app",
+  "build": {
+    "beforeDevCommand": "npm run dev",
+    "devUrl": "http://localhost:5173",
+    "beforeBuildCommand": "npm run build",
+    "frontendDist": "../dist"
+  },
+  "bundle": {
+    "active": true,
+    "targets": "all",
+    "category": "Productivity",
+    "shortDescription": "B站 AI 笔记助手",
+    "longDescription": "BiNote 是一款基于 Tauri 的 B站视频转录和 AI 总结工具。",
+    "icon": [
+      "icons/icon.ico",
+      "icons/icon.icns",
+      "icons/icon.png"
+    ]
+  },
+  "app": {
+    "windows": [
+      {
+        "title": "BiNote",
+        "width": 800,
+        "height": 600,
+        "minWidth": 400,
+        "minHeight": 300
+      }
+    ],
+    "security": {
+      "csp": null
+    }
+  }
+}

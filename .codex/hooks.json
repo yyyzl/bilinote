@@ -1,0 +1,16 @@
+{
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python .codex/hooks/fusion-session-start.py",
+            "timeout": 10,
+            "statusMessage": "Loading Fusion recovery context..."
+          }
+        ]
+      }
+    ]
+  }
+}
