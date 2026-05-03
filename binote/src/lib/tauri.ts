@@ -97,6 +97,7 @@ export const startTranscribe = (bvid: string) => invoke<string>("start_transcrib
 export const startSummarize = (noteId: string) => invoke<string>("start_summarize", { noteId });
 export const startMindmap = (noteId: string) => invoke<string>("start_mindmap", { noteId });
 export const getTaskStatus = (taskId: string) => invoke<TaskInfo>("get_task_status", { taskId });
+export const consumeNotificationNavTarget = () => invoke<string | null>("consume_notification_nav_target");
 export const verifySessdata = (sessdata: string) => invoke<LoginStatus>("verify_sessdata", { sessdata });
 
 // ====== 扫码登录 ======

@@ -53,6 +53,7 @@ pub fn run() {
             commands::qrcode_poll,
             commands::get_login_status,
             commands::logout_bilibili,
+            notification::consume_notification_nav_target,
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application");

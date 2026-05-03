@@ -127,6 +127,32 @@ fn write_nav_target(app: &AppHandle, note_id: &str) {
     }
 }
 
+#[tauri::command]
+pub fn consume_notification_nav_target(app: AppHandle) -> Option<String> {
+    let data_dir = app.path().data_dir().ok()?;
+    let target_path = data_dir.join(NAV_TARGET_FILENAME);
+
+    match std::fs::read_to_string(&target_path) {
+        Ok(note_id) => {
+            if let Err(e) = std::fs::remove_file(&target_path) {
+                eprintln!("Failed to remove notification nav target: {}", e);
+            }
+
+            let note_id = note_id.trim().to_string();
+            if note_id.is_empty() {
+                None
+            } else {
+                Some(note_id)
+            }
+        }
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => None,
+        Err(e) => {
+            eprintln!("Failed to read notification nav target: {}", e);
+            None
+        }
+    }
+}
+
 /// 截断标题到指定长度，超出部分用省略号表示
 fn truncate_title(s: &str, max_len: usize) -> String {
     if s.chars().count() > max_len {
