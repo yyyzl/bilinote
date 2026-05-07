@@ -17,6 +17,7 @@ import {
 import * as api from "../lib/tauri";
 import ErrorModal, { formatError } from "../components/ErrorModal";
 import MermaidRenderer from "../components/MermaidRenderer";
+import CopyButton from "../components/CopyButton";
 
 type TabType = "summary" | "mindmap";
 type GenerateType = "summary" | "mindmap";
@@ -373,6 +374,9 @@ export default function NoteDetail() {
                     {currentProgress || "生成中..."}
                   </div>
                 )}
+                {!isLoading && activeTab === "summary" && note.summary && (
+                  <CopyButton text={note.summary} label="复制总结" />
+                )}
                 {!isLoading && hasCurrentContent && (
                   <button
                     onClick={activeTab === "summary" ? handleSummarize : handleMindmap}
@@ -469,10 +473,13 @@ export default function NoteDetail() {
                 </p>
               </div>
 
-              <button onClick={() => setExpanded((previous) => !previous)} className="button-secondary">
-                <ScrollText size={16} />
-                {expanded ? "收起" : "展开"}
-              </button>
+              <div className="flex flex-wrap items-center gap-2">
+                <CopyButton text={note.transcript} label="复制原文" />
+                <button onClick={() => setExpanded((previous) => !previous)} className="button-secondary">
+                  <ScrollText size={16} />
+                  {expanded ? "收起" : "展开"}
+                </button>
+              </div>
             </div>
 
             <div className="mt-6 rounded-[28px] border border-ink-100/80 bg-canvas-100/50 p-4 sm:p-5">

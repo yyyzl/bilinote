@@ -20,7 +20,7 @@ Keep this managed block so 'trellis update' can refresh the instructions.
 <!-- gitnexus:start -->
 # GitNexus — Code Intelligence
 
-This project is indexed by GitNexus as **biliGPT** (824 symbols, 1469 relationships, 70 execution flows). Use the GitNexus MCP tools to understand code, assess impact, and navigate safely.
+This project is indexed by GitNexus as **bilinote** (843 symbols, 1495 relationships, 71 execution flows). Use the GitNexus MCP tools to understand code, assess impact, and navigate safely.
 
 > If any GitNexus tool warns the index is stale, run `npx gitnexus analyze` in terminal first.
 
@@ -43,10 +43,10 @@ This project is indexed by GitNexus as **biliGPT** (824 symbols, 1469 relationsh
 
 | Resource | Use for |
 |----------|---------|
-| `gitnexus://repo/biliGPT/context` | Codebase overview, check index freshness |
-| `gitnexus://repo/biliGPT/clusters` | All functional areas |
-| `gitnexus://repo/biliGPT/processes` | All execution flows |
-| `gitnexus://repo/biliGPT/process/{name}` | Step-by-step execution trace |
+| `gitnexus://repo/bilinote/context` | Codebase overview, check index freshness |
+| `gitnexus://repo/bilinote/clusters` | All functional areas |
+| `gitnexus://repo/bilinote/processes` | All execution flows |
+| `gitnexus://repo/bilinote/process/{name}` | Step-by-step execution trace |
 
 ## CLI
 

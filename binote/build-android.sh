@@ -14,6 +14,8 @@ NC='\033[0m' # No Color
 PROJECT_ROOT="G:/AndroidAPP/biliGPT/binote"
 TAURI_DIR="$PROJECT_ROOT/src-tauri"
 ANDROID_DIR="$TAURI_DIR/gen/android"
+ANDROID_RES="$ANDROID_DIR/app/src/main/res"
+ANDROID_ICON_SOURCE="$TAURI_DIR/icons/android"
 BUILD_TOOLS="C:/Users/10455/AppData/Local/Android/Sdk/build-tools/36.0.0"
 KEYSTORE="C:/Users/10455/.android/debug.keystore"
 
@@ -43,15 +45,24 @@ fi
 echo -e "${GREEN}✓ Rust 编译完成${NC}"
 echo ""
 
-# 步骤2: 复制 so 文件
-echo -e "${YELLOW}[2/4] 复制 so 文件...${NC}"
+# 步骤2: 同步安卓专用图标
+echo -e "${YELLOW}[2/5] 同步安卓专用图标...${NC}"
+for density in mipmap-mdpi mipmap-hdpi mipmap-xhdpi mipmap-xxhdpi mipmap-xxxhdpi; do
+    mkdir -p "$ANDROID_RES/$density"
+    cp -f "$ANDROID_ICON_SOURCE/$density"/ic_launcher*.png "$ANDROID_RES/$density/"
+done
+echo -e "${GREEN}✓ 安卓图标同步完成${NC}"
+echo ""
+
+# 步骤3: 复制 so 文件
+echo -e "${YELLOW}[3/5] 复制 so 文件...${NC}"
 mkdir -p "$(dirname "$SO_DEST")"
 cp -f "$SO_SOURCE" "$SO_DEST"
 echo -e "${GREEN}✓ so 文件复制完成${NC}"
 echo ""
 
-# 步骤3: Gradle 构建 APK
-echo -e "${YELLOW}[3/4] Gradle 构建 APK...${NC}"
+# 步骤4: Gradle 构建 APK
+echo -e "${YELLOW}[4/5] Gradle 构建 APK...${NC}"
 cd "$ANDROID_DIR"
 ./gradlew assembleArm64Release -x rustBuildArm64Release
 if [ ! -f "$APK_UNSIGNED" ]; then
@@ -61,8 +72,8 @@ fi
 echo -e "${GREEN}✓ Gradle 构建完成${NC}"
 echo ""
 
-# 步骤4: 对齐并签名 APK
-echo -e "${YELLOW}[4/4] 对齐并签名 APK...${NC}"
+# 步骤5: 对齐并签名 APK
+echo -e "${YELLOW}[5/5] 对齐并签名 APK...${NC}"
 
 # 对齐
 "$BUILD_TOOLS/zipalign" -f -v -p 4 "$APK_UNSIGNED" "$APK_ALIGNED"

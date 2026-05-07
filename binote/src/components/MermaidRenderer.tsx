@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import mermaid from "mermaid";
 import { AlertCircle, ZoomIn, ZoomOut, RotateCcw, RefreshCw } from "lucide-react";
+import CopyButton from "./CopyButton";
 
 interface Props {
   code: string;
@@ -105,6 +106,9 @@ export default function MermaidRenderer({ code, className, onRegenerate }: Props
           <p className="mt-1 text-sm text-ink-500">支持缩放查看节点结构，适合快速浏览视频脉络。</p>
         </div>
 
+        <div className="flex flex-wrap items-center gap-2">
+          <CopyButton text={code} label="复制源码" />
+
         {/* 缩放控制栏 */}
         <div className="flex items-center gap-1 rounded-full border border-ink-100 bg-white/[0.65] p-1">
           <button
@@ -134,6 +138,7 @@ export default function MermaidRenderer({ code, className, onRegenerate }: Props
           >
             <RotateCcw size={16} />
           </button>
+        </div>
         </div>
       </div>
 
