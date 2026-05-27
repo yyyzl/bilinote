@@ -163,26 +163,54 @@ export default function Modal({
 
 ### Theme Colors
 
-| Color | Tailwind Class | Hex | Usage |
-|-------|---------------|-----|-------|
-| Primary | `primary-500` | `#fb7299` | Buttons, links, accents |
-| Primary Light | `primary-50` | `#fef2f5` | Hover backgrounds |
-| Primary Dark | `primary-700` | `#b5355e` | Active states |
-| Background | `slate-50` | — | Page backgrounds |
-| Text | `slate-900` | — | Primary text |
-| Muted | `slate-500` | — | Secondary text |
-| Error | `red-500` / `red-50` | — | Error states |
-| Success | `green-500` / `green-50` | — | Success states |
+Editorial / paper aesthetic — terracotta primary on warm cream paper with ink-toned text. See `binote/tailwind.config.js` for the full scale.
+
+| Role | Tailwind Class | Hex | Usage |
+|------|---------------|-----|-------|
+| Primary | `primary-500` | `#b75d3e` | Primary buttons, focus rings, brand accents (terracotta) |
+| Primary deep | `primary-700` | `#7f3f2d` | Hover/active on primary |
+| Primary tint | `primary-100` | `#f2e2d8` | Subtle hover backgrounds, soft chips |
+| Canvas | `canvas-50` | `#fbf8f2` | Page background (warm cream) |
+| Paper | `paper-50` | `#fffdf8` | Card / panel surfaces |
+| Text | `ink-900` | `#1f1b18` | Primary text (warm near-black) |
+| Muted text | `ink-500` | `#6d6257` | Secondary text |
+| Subtle text | `ink-400` / `ink-300` | — | Captions, dividers, placeholder |
+| Sage accent | `sage-500` | `#78806f` | Quiet supporting accent |
+| Gold accent | `gold-500` | `#b88a53` | Metric / highlight accent |
+
+### Typography
+
+- Body: `font-sans` → **Manrope** (with PingFang SC / Noto Sans SC fallbacks for CJK)
+- Display / headings: `font-display` → **Newsreader** serif (with Source Han Serif / Songti fallbacks) — used in `.title-display` / `.section-display` for editorial-style titles
 
 ### Custom Shadows
 
-```typescript
-// Soft shadow (default card)
-className="shadow-soft"  // 0 4px 20px -2px rgba(0,0,0,0.05)
+All shadows are warm-toned (rgba based on burnt-orange ink), not cool grey.
 
-// Glow effect (primary accent)
-className="shadow-glow"  // 0 0 15px rgba(251,114,153,0.3)
+```typescript
+// Default card — soft warm drop shadow
+className="shadow-soft"   // 0 18px 40px -24px rgba(58, 44, 28, 0.28)
+
+// Elevated panel (hero, modal)
+className="shadow-panel"  // 0 24px 60px -34px rgba(59, 44, 25, 0.32)
+
+// Floating element (popover, toast)
+className="shadow-float"  // 0 28px 80px -38px rgba(75, 53, 27, 0.38)
+
+// Inner highlight (used on glass surfaces)
+className="shadow-inset"  // inset 0 1px 0 rgba(255, 255, 255, 0.72)
 ```
+
+### Component classes
+
+Reusable styles live as `@layer components` in `binote/src/styles/globals.css`:
+
+- `.hero-panel` / `.editorial-card` / `.editorial-card-muted` — paper surfaces with glass blur + inner highlight
+- `.editorial-chip` / `.editorial-kicker` — uppercase tracking-wide labels
+- `.title-display` / `.section-display` / `.body-muted` — editorial typography scale
+- `.button-primary` / `.button-secondary` / `.button-tertiary` — pill buttons with warm shadow
+- `.input-shell` / `.textarea-shell` — large rounded inputs with primary focus ring
+- `.divider-soft` — fading horizontal rule
 
 ### Responsive Design
 

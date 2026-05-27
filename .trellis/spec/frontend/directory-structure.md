@@ -40,7 +40,7 @@ binote/
 ├── package.json             # Dependencies (React 18, Tauri API v2, Mermaid, Lucide)
 ├── tsconfig.json            # TypeScript config (strict mode, path aliases)
 ├── vite.config.ts           # Vite config (port 5173, @ alias)
-├── tailwind.config.js       # Tailwind theme (primary color #fb7299)
+├── tailwind.config.js       # Tailwind theme (terracotta primary #b75d3e + canvas/paper/ink/sage/gold palette)
 └── index.html               # HTML entry point
 ```
 

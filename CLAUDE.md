@@ -69,7 +69,7 @@ cd binote && npm run build    # Build to dist/
 ## Key Patterns
 
 - **Routing**: HashRouter required for Tauri's file:// protocol
-- **Styling**: Tailwind CSS with custom pink primary color (#fb7299)
+- **Styling**: Tailwind CSS with an editorial paper aesthetic — terracotta primary (#b75d3e), warm canvas/paper neutrals, ink-toned text, sage/gold accents, Manrope (sans) + Newsreader (serif) font pairing. Visual language sits close to Claude.ai.
 - **Path Alias**: `@/*` maps to `./src/*`
 - **Error Handling**: Custom `AppError` enum in Rust, `formatError()` utility in frontend
 - **State**: Tauri AppState with Mutex-wrapped Store

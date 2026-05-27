@@ -24,7 +24,7 @@
 - 🤖 **任意 OpenAI 兼容 LLM** —— 默认 `gpt-4o-mini`，也可接 Claude / DeepSeek / Qwen / Kimi 等
 - 💾 **本地优先** —— 配置和笔记都存在本地 app data 目录，不经第三方服务器
 - 📱 **桌面 / 移动同源** —— 同一份 Rust 代码同时跑 Windows、macOS、Android
-- 🎨 **iOS 风格 UI** —— Tailwind + 自定义粉色主题 `#fb7299`
+- 🎨 **编辑/杂志风纸感 UI** —— 暖橙赤陶主色 `#b75d3e`，米白纸感底，Manrope 正文 + Newsreader 衬线大标题，整体接近 Claude.ai 的视觉语言
 - 🧹 **临时音频自动清理** —— 转录完成立即删除
 
 ---
