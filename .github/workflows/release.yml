@@ -222,7 +222,7 @@ jobs:
           fi
 
       - name: Build Android APK (Rust + Gradle)
-        run: npx tauri android build --target aarch64 --apk
+        run: npx tauri android build --target aarch64 --apk true
 
       - name: Sign and align APK
         shell: bash
