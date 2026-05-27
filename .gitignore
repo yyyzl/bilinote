@@ -78,3 +78,6 @@ yarn-error.log*
 # === Git 历史备份（本地保留，不入库） ===
 .git.backup-*/
 .git.backup-*
+
+# === Claude Code worktree 工作区（工具产物） ===
+.claude/worktrees/
