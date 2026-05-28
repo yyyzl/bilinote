@@ -81,3 +81,6 @@ yarn-error.log*
 
 # === Claude Code worktree 工作区（工具产物） ===
 .claude/worktrees/
+
+# === 本地保留的源码备份（不入库） ===
+*.backup
