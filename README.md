@@ -18,14 +18,21 @@
 
 ## ✨ 功能特性
 
-- 🎬 **全格式 B站链接解析** —— `b23.tv` 短链、`BVxxx`、`av123456`、完整 URL 都能直接粘贴
+- 🎬 **全格式 B站链接解析** —— `b23.tv` 短链、`BVxxx`、`av123456`、完整 URL 都直接粘贴；甚至能从 B站 App 复制的"标题 + 链接"整段文本里自动抽取
+- 📺 **分 P 视频自动处理** —— 多 P 视频按顺序逐 P 转录，进度实时回传
+- 📝 **官方字幕优先 + ASR 兜底** —— 登录后能拿到字幕的视频直接用官方字幕（最快、最准、零 ASR 成本）；字幕过短或获取失败才回落到 ASR 转录
 - 🎙️ **双 ASR 引擎可选** —— 阿里云 DashScope `qwen3-asr-flash` 或硅基流动 SenseVoiceSmall
-- 🔐 **B站扫码登录** —— RSA-OAEP 加密 + Cookie 自动刷新，1080P / 大会员视频也能转
 - 🤖 **任意 OpenAI 兼容 LLM** —— 默认 `gpt-4o-mini`，也可接 Claude / DeepSeek / Qwen / Kimi 等
+- 🧠 **AI 总结 + 思维导图** —— LLM 生成结构化摘要，并产出 Mermaid 思维导图（前端实时渲染可视化）
+- 🔐 **B站扫码登录** —— RSA-OAEP 加密 + Cookie 自动刷新，1080P / 大会员 / 仅登录可见的视频都能转
+- 🛑 **后台任务 + 可取消** —— 转录 / 总结 / 思维导图全部跑后台，UI 可关闭、可切页面，长任务支持中途取消
+- 🔔 **系统通知** —— 任务完成（成功 / 失败）触发桌面或 Android 系统通知，点击可跳回对应笔记
+- 📤 **Android 分享接收** —— 在 B站 App、浏览器、微信里选"分享到 BiNote"，App 直接开始转录
+- 📋 **一键复制** —— 转录稿、AI 总结都有复制按钮，方便贴到笔记软件 / 群聊
 - 💾 **本地优先** —— 配置和笔记都存在本地 app data 目录，不经第三方服务器
 - 📱 **桌面 / 移动同源** —— 同一份 Rust 代码同时跑 Windows、macOS、Android
 - 🎨 **编辑/杂志风纸感 UI** —— 暖橙赤陶主色 `#b75d3e`，米白纸感底，Manrope 正文 + Newsreader 衬线大标题，整体接近 Claude.ai 的视觉语言
-- 🧹 **临时音频自动清理** —— 转录完成立即删除
+- 🧹 **临时音频自动清理** —— ASR 路径下载的音频转写完立即删除
 
 ---
 
@@ -131,27 +138,65 @@ binote/
 │   ├── pages/
 │   │   ├── Dashboard.tsx         # 笔记列表 + 链接输入
 │   │   ├── Settings.tsx          # 配置 + 扫码登录
-│   │   └── NoteDetail.tsx        # 转录稿 + AI 总结
-│   └── lib/tauri.ts              # invoke / event 封装
+│   │   └── NoteDetail.tsx        # 转录稿 + AI 总结 + 思维导图
+│   ├── components/
+│   │   ├── MermaidRenderer.tsx   # Mermaid 思维导图渲染
+│   │   ├── CopyButton.tsx        # 一键复制按钮
+│   │   ├── ConfirmModal.tsx      # 二次确认弹窗（删除等）
+│   │   └── ErrorModal.tsx        # 错误展示
+│   ├── contexts/
+│   │   ├── ShareContext.tsx          # Android 分享 URL 派发
+│   │   └── NotificationNavContext.tsx # 系统通知点击 → 路由
+│   └── lib/
+│       ├── tauri.ts              # invoke / event 封装
+│       ├── share.ts              # Android 分享桥（receiveShareFromAndroid）
+│       └── notification-nav.ts   # 通知点击跳转协议
 └── src-tauri/                    # Rust 后端
     └── src/
         ├── main.rs               # 入口
+        ├── lib.rs                # Tauri Builder + invoke handlers 注册
         ├── commands.rs           # Tauri command 处理器
-        ├── bilibili.rs           # B站 API（视频信息、音频下载）
-        ├── auth.rs               # 扫码登录 + Cookie 刷新
+        ├── bilibili.rs           # B站 API（视频信息、分 P、音频下载、字幕）
+        ├── auth.rs               # 扫码登录 + Cookie 刷新（RSA-OAEP）
         ├── asr/                  # ASR 抽象 + 两种实现
-        │   ├── mod.rs
-        │   ├── dashscope.rs
-        │   ├── sensevoice.rs
-        │   └── utils.rs
-        ├── llm.rs                # OpenAI 兼容 LLM 客户端
-        ├── store.rs              # JSON 持久化
-        └── error.rs              # AppError
+        │   ├── mod.rs            # AsrProvider 枚举 + 统一客户端
+        │   ├── dashscope.rs      # 阿里云 DashScope
+        │   ├── sensevoice.rs     # 硅基流动 SenseVoice
+        │   └── utils.rs          # 共享工具
+        ├── llm.rs                # OpenAI 兼容 LLM（总结 + 思维导图）
+        ├── notification.rs       # 系统通知 + 通知点击导航
+        ├── retry.rs              # 重试 / 退避机制
+        ├── store.rs              # JSON 持久化（config.json / notes.json）
+        └── error.rs              # AppError（thiserror）
 ```
 
-**Tauri Commands**: `get_config` / `save_config` / `get_notes` / `get_note` / `delete_note` / `parse_link` / `get_video_info` / `transcribe` / `summarize` / `qrcode_generate` / `qrcode_poll` / `get_login_status` / `logout_bilibili`
+### Tauri Commands
 
-**事件**: `transcribe:progress`、`summarize:progress` 实时推进度到前端。
+权威清单见 [`lib.rs`](binote/src-tauri/src/lib.rs)（`generate_handler!` 宏内列表）。
+
+| 分组 | Commands |
+|------|----------|
+| **配置** | `get_config` / `save_config` |
+| **笔记 CRUD** | `get_notes` / `get_note` / `delete_note` |
+| **B站 API** | `parse_link` / `get_video_info` |
+| **转录** | `transcribe`（同步）/ `start_transcribe`（后台）|
+| **总结** | `summarize`（同步）/ `start_summarize`（后台）|
+| **思维导图** | `start_mindmap`（后台）|
+| **任务控制** | `get_task_status` / `cancel_task` |
+| **B站登录** | `qrcode_generate` / `qrcode_poll` / `verify_sessdata` / `get_login_status` / `logout_bilibili` |
+| **通知导航** | `consume_notification_nav_target` |
+
+> 同名的 `transcribe` / `summarize` 是早期同步版本；新代码请用 `start_*` 后台版本配合 `get_task_status` / `cancel_task` 使用，更适合长任务和移动端。
+
+### 事件 Emissions
+
+| 事件 | 触发 | Payload |
+|------|------|---------|
+| `transcribe:progress` | 转录全流程的状态推送（含字幕检测、ASR、登录刷新等阶段消息） | `string` |
+| `summarize:progress` | LLM 总结流式 / 阶段消息 | `string` |
+| `mindmap:progress` | 思维导图生成阶段消息 | `string` |
+
+任务完成 / 失败时另外触发系统通知（见 `notification.rs`），点击通知会通过 `consume_notification_nav_target` 跳到对应笔记。
 
 ---
 

@@ -27,44 +27,66 @@ cd binote && npm run build    # Build to dist/
 - `binote/src-tauri/src/` - Rust backend modules
 
 ### Backend Modules (Rust)
-- `bilibili.rs` - Bilibili API client (video info, audio download)
-- `auth.rs` - B站认证模块（QR码扫码登录 + Cookie自动刷新，RSA-OAEP加密）
-- `asr/` - ASR 模块目录
-  - `mod.rs` - ASR 提供商枚举和统一客户端接口
-  - `dashscope.rs` - 阿里云 DashScope ASR 客户端 (qwen3-asr-flash)
-  - `sensevoice.rs` - SenseVoice ASR 客户端 (硅基流动)
-  - `utils.rs` - 共享工具函数
-- `llm.rs` - OpenAI-compatible LLM client for summarization
-- `store.rs` - JSON file persistence (config.json, notes.json in app data dir)
-- `commands.rs` - Tauri command handlers
-- `error.rs` - AppError enum with thiserror
+- `main.rs` - Binary entry; delegates to `lib::run()`
+- `lib.rs` - Tauri Builder, AppState wiring, `generate_handler!` registry (authoritative command list)
+- `commands.rs` - Tauri command handlers (sync + background `start_*` variants, task lifecycle)
+- `bilibili.rs` - Bilibili API client: link parsing (b23.tv / BV / av / 复制带标题的整段文本), video info, multi-page (分 P) list, audio stream, official subtitles
+- `auth.rs` - B站扫码登录 + Cookie 自动刷新 (RSA-OAEP)
+- `asr/` - ASR provider abstraction + two implementations
+  - `mod.rs` - `AsrProvider` enum + unified client
+  - `dashscope.rs` - Aliyun DashScope (qwen3-asr-flash)
+  - `sensevoice.rs` - SiliconFlow SenseVoiceSmall
+  - `utils.rs` - shared helpers
+- `llm.rs` - OpenAI-compatible LLM client (summary + mindmap generation)
+- `notification.rs` - System notifications + notification-tap navigation (`consume_notification_nav_target`)
+- `retry.rs` - Retry / backoff helpers used by network calls
+- `store.rs` - JSON persistence (`config.json`, `notes.json` in app data dir)
+- `error.rs` - `AppError` enum with `thiserror`
+
+> Heads-up: `commands.rs.backup` is a stale local snapshot of an earlier `commands.rs` — ignored via `.gitignore` (`*.backup`). Do not import from it.
 
 ### Frontend Pages
-- `Dashboard.tsx` - Main page with note list and Bilibili link input
-- `Settings.tsx` - API key configuration, B站扫码登录, ASR provider selection, LLM
-- `NoteDetail.tsx` - Transcript and AI summary display
+- `Dashboard.tsx` - Main page: note list, Bilibili link input, share-URL intake, background task progress
+- `Settings.tsx` - API key configuration, B站扫码登录, ASR provider selection, LLM endpoint/model
+- `NoteDetail.tsx` - Transcript + AI summary + Mermaid mindmap, copy buttons
+
+### Frontend Building Blocks
+- `components/MermaidRenderer.tsx` - Renders mindmap Mermaid source from LLM
+- `components/CopyButton.tsx` - One-click copy for transcript / summary
+- `components/ConfirmModal.tsx` / `ErrorModal.tsx` - Reusable dialogs
+- `contexts/ShareContext.tsx` + `lib/share.ts` - Receive share URLs from Android (`receiveShareFromAndroid` is exposed pre-React-ready)
+- `contexts/NotificationNavContext.tsx` + `lib/notification-nav.ts` - Notification-tap → route bridge
+- `lib/tauri.ts` - Strongly-typed wrappers around `invoke` / `event.listen`
 
 ### Tauri Commands (invoke API)
-- `get_config()` / `save_config(config)` - Configuration
-- `get_notes()` / `get_note(id)` / `delete_note(id)` - Notes CRUD
-- `parse_link(input)` - Extract BVID from Bilibili URLs
-- `get_video_info(bvid)` - Fetch video metadata
-- `transcribe(bvid)` - Full pipeline: download audio → ASR → save note (集成Cookie自动刷新)
-- `summarize(noteId)` - Generate AI summary
-- `qrcode_generate()` - 生成B站登录二维码
-- `qrcode_poll(qrcode_key)` - 轮询扫码状态（成功时自动保存凭证）
-- `get_login_status()` - 获取登录状态（自动尝试刷新过期Cookie）
-- `logout_bilibili()` - 登出B站账号（清除所有凭证）
+
+Authoritative list lives in `binote/src-tauri/src/lib.rs` inside `generate_handler!`. Grouped:
+
+- **Config**: `get_config()` / `save_config(config)`
+- **Notes CRUD**: `get_notes()` / `get_note(id)` / `delete_note(id)`
+- **Bilibili API**: `parse_link(input)` / `get_video_info(bvid)`
+- **Transcription**: `transcribe(bvid)` (sync, legacy) / `start_transcribe(bvid)` (background, returns `task_id`)
+- **Summary**: `summarize(noteId)` (sync, legacy) / `start_summarize(noteId)` (background)
+- **Mindmap**: `start_mindmap(noteId)` (background; emits Mermaid source)
+- **Task control**: `get_task_status(task_id)` / `cancel_task(task_id)`
+- **B站 Auth**: `qrcode_generate()` / `qrcode_poll(qrcode_key)` / `verify_sessdata(sessdata)` / `get_login_status()` / `logout_bilibili()`
+- **Notification routing**: `consume_notification_nav_target()`
+
+Prefer `start_*` background variants for long-running work — they wire into the task registry (`AppState::tasks` / `task_handles`) so the UI can cancel and observe progress without blocking.
+
+### Subtitle-first transcription strategy
+
+`commands.rs::resolve_subtitle_access` runs before any ASR call: if the user is logged in and the video exposes official subtitles long enough to be useful, those are used directly (zero ASR cost, faster, more accurate). ASR is only invoked when subtitles are missing, too short, or the fetch fails. Auto Cookie refresh kicks in inside this path when SESSDATA expires.
 
 ### Event Emissions
-- `transcribe:progress` - Real-time transcription status
-- `summarize:progress` - Real-time summarization status
+- `transcribe:progress` - Transcription pipeline status (subtitle probe, audio download, ASR, save…)
+- `summarize:progress` - LLM summary stream / phase messages
+- `mindmap:progress` - Mindmap generation phase messages
 
-### Notifications (Android)
-- `TranscribeSuccess` - 转录完成通知
-- `TranscribeFailed` - 转录失败通知
-- `SummarizeSuccess` - AI 总结完成通知
-- `SummarizeFailed` - AI 总结失败通知
+### Notifications (both desktop and Android via tauri-plugin-notification)
+- `TranscribeSuccess` / `TranscribeFailed` - 转录完成 / 失败
+- `SummarizeSuccess` / `SummarizeFailed` - AI 总结完成 / 失败
+- Tapping a notification triggers route navigation through `notification-nav` (frontend) / `consume_notification_nav_target` (backend).
 
 ## Key Patterns
 
