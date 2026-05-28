@@ -75,10 +75,16 @@ async fn transcribe_page_asr(
             aid,
             cid,
             Some(move |ctx: RetryContext| {
-                let msg = format!(
-                    "{}音频下载失败，正在重试 ({}/{})...",
-                    page_label_clone, ctx.attempt, ctx.max_attempts
-                );
+                let msg = match ctx.last_error {
+                    Some(err) => format!(
+                        "{}音频下载失败，正在重试 ({}/{}): {}",
+                        page_label_clone, ctx.attempt, ctx.max_attempts, err
+                    ),
+                    None => format!(
+                        "{}音频下载失败，正在重试 ({}/{})...",
+                        page_label_clone, ctx.attempt, ctx.max_attempts
+                    ),
+                };
                 let _ = app_clone.emit("transcribe:progress", msg);
             }),
         )
@@ -96,10 +102,16 @@ async fn transcribe_page_asr(
         .transcribe_with_retry(
             &audio_data,
             Some(move |ctx: RetryContext| {
-                let msg = format!(
-                    "{}{} 转录失败，正在重试 ({}/{})...",
-                    page_label_clone, provider_name_clone, ctx.attempt, ctx.max_attempts
-                );
+                let msg = match ctx.last_error {
+                    Some(err) => format!(
+                        "{}{} 转录失败，正在重试 ({}/{}): {}",
+                        page_label_clone, provider_name_clone, ctx.attempt, ctx.max_attempts, err
+                    ),
+                    None => format!(
+                        "{}{} 转录失败，正在重试 ({}/{})...",
+                        page_label_clone, provider_name_clone, ctx.attempt, ctx.max_attempts
+                    ),
+                };
                 let _ = app_clone.emit("transcribe:progress", msg);
             }),
         )
@@ -184,10 +196,16 @@ async fn perform_transcription(
         .get_video_info_with_retry(
             bvid,
             Some(move |ctx: RetryContext| {
-                let msg = format!(
-                    "获取视频信息失败，正在重试 ({}/{})...",
-                    ctx.attempt, ctx.max_attempts
-                );
+                let msg = match ctx.last_error {
+                    Some(err) => format!(
+                        "获取视频信息失败，正在重试 ({}/{}): {}",
+                        ctx.attempt, ctx.max_attempts, err
+                    ),
+                    None => format!(
+                        "获取视频信息失败，正在重试 ({}/{})...",
+                        ctx.attempt, ctx.max_attempts
+                    ),
+                };
                 let _ = app_clone.emit("transcribe:progress", msg);
             }),
         )
@@ -452,10 +470,16 @@ pub async fn summarize(
             &note.transcript,
             &note.title,
             Some(move |ctx: RetryContext| {
-                let msg = format!(
-                    "AI 总结失败，正在重试 ({}/{})...",
-                    ctx.attempt, ctx.max_attempts
-                );
+                let msg = match ctx.last_error {
+                    Some(err) => format!(
+                        "AI 总结失败，正在重试 ({}/{}): {}",
+                        ctx.attempt, ctx.max_attempts, err
+                    ),
+                    None => format!(
+                        "AI 总结失败，正在重试 ({}/{})...",
+                        ctx.attempt, ctx.max_attempts
+                    ),
+                };
                 let _ = app_clone.emit("summarize:progress", msg);
             }),
         )
@@ -678,10 +702,16 @@ async fn transcribe_background(
             &transcript1,
             &title1,
             Some(move |ctx: RetryContext| {
-                let msg = format!(
-                    "AI 总结失败，正在重试 ({}/{})...",
-                    ctx.attempt, ctx.max_attempts
-                );
+                let msg = match ctx.last_error {
+                    Some(err) => format!(
+                        "AI 总结失败，正在重试 ({}/{}): {}",
+                        ctx.attempt, ctx.max_attempts, err
+                    ),
+                    None => format!(
+                        "AI 总结失败，正在重试 ({}/{})...",
+                        ctx.attempt, ctx.max_attempts
+                    ),
+                };
                 let _ = app_clone1.emit("transcribe:progress", msg);
             }),
         ),
@@ -689,10 +719,16 @@ async fn transcribe_background(
             &transcript2,
             &title2,
             Some(move |ctx: RetryContext| {
-                let msg = format!(
-                    "思维导图生成失败，正在重试 ({}/{})...",
-                    ctx.attempt, ctx.max_attempts
-                );
+                let msg = match ctx.last_error {
+                    Some(err) => format!(
+                        "思维导图生成失败，正在重试 ({}/{}): {}",
+                        ctx.attempt, ctx.max_attempts, err
+                    ),
+                    None => format!(
+                        "思维导图生成失败，正在重试 ({}/{})...",
+                        ctx.attempt, ctx.max_attempts
+                    ),
+                };
                 let _ = app_clone2.emit("transcribe:progress", msg);
             }),
         )
@@ -863,10 +899,16 @@ async fn summarize_background(note_id: String, app: AppHandle) -> Result<Note> {
             &note.transcript,
             &note.title,
             Some(move |ctx: RetryContext| {
-                let msg = format!(
-                    "AI 总结失败，正在重试 ({}/{})...",
-                    ctx.attempt, ctx.max_attempts
-                );
+                let msg = match ctx.last_error {
+                    Some(err) => format!(
+                        "AI 总结失败，正在重试 ({}/{}): {}",
+                        ctx.attempt, ctx.max_attempts, err
+                    ),
+                    None => format!(
+                        "AI 总结失败，正在重试 ({}/{})...",
+                        ctx.attempt, ctx.max_attempts
+                    ),
+                };
                 let _ = app_clone.emit("summarize:progress", msg);
             }),
         )
@@ -1011,10 +1053,16 @@ async fn mindmap_background(note_id: String, app: AppHandle) -> Result<Note> {
             &note.transcript,
             &note.title,
             Some(move |ctx: RetryContext| {
-                let msg = format!(
-                    "思维导图生成失败，正在重试 ({}/{})...",
-                    ctx.attempt, ctx.max_attempts
-                );
+                let msg = match ctx.last_error {
+                    Some(err) => format!(
+                        "思维导图生成失败，正在重试 ({}/{}): {}",
+                        ctx.attempt, ctx.max_attempts, err
+                    ),
+                    None => format!(
+                        "思维导图生成失败，正在重试 ({}/{})...",
+                        ctx.attempt, ctx.max_attempts
+                    ),
+                };
                 let _ = app_clone.emit("mindmap:progress", msg);
             }),
         )

@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize};
 use std::time::{Duration, Instant};
 
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
-const REQUEST_TIMEOUT: Duration = Duration::from_secs(120);
+const REQUEST_TIMEOUT: Duration = Duration::from_secs(180);
 const TEST_TIMEOUT: Duration = Duration::from_secs(15);
 
 pub struct LlmClient {
