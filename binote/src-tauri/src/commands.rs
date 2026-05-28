@@ -664,7 +664,19 @@ async fn transcribe_background(
         return Err(crate::error::AppError::StoreError("任务已取消".into()));
     }
 
-    // ===== 自动生成逻辑（总结 + 思维导图并行）=====
+    // ===== 自动生成逻辑（按用户开关跳过总结 / 思维导图）=====
+    let auto_summary = config.auto_summary;
+    let auto_mindmap = config.auto_mindmap;
+
+    // 两个都关：跳过整个 LLM 阶段（包括 API Key 校验）
+    if !auto_summary && !auto_mindmap {
+        return Ok(TranscribeResult::TranscribeOnly {
+            note,
+            summarize_error: None,
+            mindmap_error: None,
+        });
+    }
+
     // 检查 LLM 配置是否有效
     let llm_key = match &config.llm_api_key {
         Some(key) if !key.is_empty() => key.clone(),
@@ -683,65 +695,94 @@ async fn transcribe_background(
         .unwrap_or("https://api.openai.com/v1".into());
     let model = config.llm_model.clone().unwrap_or("gpt-4o-mini".into());
 
-    // 更新进度
-    let _ = app.emit("transcribe:progress", "正在生成 AI 总结和思维导图...");
+    // 进度文案按开关组合：两个都开 → "总结和思维导图"；单选 → 对应项
+    let progress_label = match (auto_summary, auto_mindmap) {
+        (true, true) => "正在生成 AI 总结和思维导图...",
+        (true, false) => "正在生成 AI 总结...",
+        (false, true) => "正在生成思维导图...",
+        (false, false) => unreachable!("已在上方提前返回"),
+    };
+    let _ = app.emit("transcribe:progress", progress_label);
 
-    // 创建 LLM 客户端
+    // 创建 LLM 客户端（内部 reqwest::Client 是 Arc，clone 廉价）
     let llm = LlmClient::new(llm_key, base_url, model);
 
-    // 并行调用总结和思维导图生成
-    let app_clone1 = app.clone();
-    let app_clone2 = app.clone();
-    let transcript1 = note.transcript.clone();
-    let transcript2 = note.transcript.clone();
-    let title1 = note.title.clone();
-    let title2 = note.title.clone();
-
-    let (summary_result, mindmap_result) = tokio::join!(
-        llm.summarize_with_retry(
-            &transcript1,
-            &title1,
-            Some(move |ctx: RetryContext| {
-                let msg = match ctx.last_error {
-                    Some(err) => format!(
-                        "AI 总结失败，正在重试 ({}/{}): {}",
-                        ctx.attempt, ctx.max_attempts, err
-                    ),
-                    None => format!(
-                        "AI 总结失败，正在重试 ({}/{})...",
-                        ctx.attempt, ctx.max_attempts
-                    ),
-                };
-                let _ = app_clone1.emit("transcribe:progress", msg);
-            }),
-        ),
-        llm.generate_mindmap_with_retry(
-            &transcript2,
-            &title2,
-            Some(move |ctx: RetryContext| {
-                let msg = match ctx.last_error {
-                    Some(err) => format!(
-                        "思维导图生成失败，正在重试 ({}/{}): {}",
-                        ctx.attempt, ctx.max_attempts, err
-                    ),
-                    None => format!(
-                        "思维导图生成失败，正在重试 ({}/{})...",
-                        ctx.attempt, ctx.max_attempts
-                    ),
-                };
-                let _ = app_clone2.emit("transcribe:progress", msg);
-            }),
-        )
-    );
-
-    // 处理结果，保留具体错误信息
-    let (summary, summarize_error) = match summary_result {
-        Ok(s) => (Some(s), None),
-        Err(e) => (None, Some(format!("AI 总结失败: {}", e))),
+    // 准备并行 future：未启用的项直接返回 None，避免无谓的 LLM 调用
+    let summary_fut = {
+        let llm = llm.clone();
+        let app = app.clone();
+        let transcript = note.transcript.clone();
+        let title = note.title.clone();
+        async move {
+            if !auto_summary {
+                return None;
+            }
+            Some(
+                llm.summarize_with_retry(
+                    &transcript,
+                    &title,
+                    Some(move |ctx: RetryContext| {
+                        let msg = match ctx.last_error {
+                            Some(err) => format!(
+                                "AI 总结失败，正在重试 ({}/{}): {}",
+                                ctx.attempt, ctx.max_attempts, err
+                            ),
+                            None => format!(
+                                "AI 总结失败，正在重试 ({}/{})...",
+                                ctx.attempt, ctx.max_attempts
+                            ),
+                        };
+                        let _ = app.emit("transcribe:progress", msg);
+                    }),
+                )
+                .await,
+            )
+        }
     };
-    let (mindmap, mindmap_error) = match mindmap_result {
-        Ok(m) => (Some(m), None),
-        Err(e) => (None, Some(format!("思维导图失败: {}", e))),
+
+    let mindmap_fut = {
+        let app = app.clone();
+        let transcript = note.transcript.clone();
+        let title = note.title.clone();
+        async move {
+            if !auto_mindmap {
+                return None;
+            }
+            Some(
+                llm.generate_mindmap_with_retry(
+                    &transcript,
+                    &title,
+                    Some(move |ctx: RetryContext| {
+                        let msg = match ctx.last_error {
+                            Some(err) => format!(
+                                "思维导图生成失败，正在重试 ({}/{}): {}",
+                                ctx.attempt, ctx.max_attempts, err
+                            ),
+                            None => format!(
+                                "思维导图生成失败，正在重试 ({}/{})...",
+                                ctx.attempt, ctx.max_attempts
+                            ),
+                        };
+                        let _ = app.emit("transcribe:progress", msg);
+                    }),
+                )
+                .await,
+            )
+        }
+    };
+
+    let (summary_opt, mindmap_opt) = tokio::join!(summary_fut, mindmap_fut);
+
+    // None = 用户未启用，不算失败；Some(Err) 才记录错误
+    let (summary, summarize_error) = match summary_opt {
+        None => (None, None),
+        Some(Ok(s)) => (Some(s), None),
+        Some(Err(e)) => (None, Some(format!("AI 总结失败: {}", e))),
+    };
+    let (mindmap, mindmap_error) = match mindmap_opt {
+        None => (None, None),
+        Some(Ok(m)) => (Some(m), None),
+        Some(Err(e)) => (None, Some(format!("思维导图失败: {}", e))),
     };
 
     // 更新笔记

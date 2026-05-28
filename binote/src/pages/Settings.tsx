@@ -110,6 +110,8 @@ export default function Settings() {
     bilibili_refresh_token: null,
     bilibili_dede_user_id: null,
     bilibili_cookie_ts: null,
+    auto_summary: true,
+    auto_mindmap: true,
   });
   const [saved, setSaved] = useState(false);
   const [error, setError] = useState("");
@@ -811,6 +813,69 @@ export default function Settings() {
                   onTest={() => void handleTestLlm()}
                   disabled={!config.llm_api_key}
                 />
+
+                <SectionField
+                  label="转录后自动生成"
+                  description="转录完成后默认自动调用 LLM 生成下列内容。关闭后仍可在笔记详情页手动补生成。"
+                >
+                  <div className="grid gap-3 sm:grid-cols-2">
+                    <button
+                      type="button"
+                      onClick={() => setConfig({ ...config, auto_summary: !config.auto_summary })}
+                      aria-pressed={config.auto_summary}
+                      className={`flex items-center justify-between gap-3 rounded-[24px] border p-4 text-left transition-all duration-200 ${
+                        config.auto_summary
+                          ? "border-primary-300 bg-primary-50/[0.35] shadow-soft"
+                          : "border-ink-100 bg-white/[0.55] hover:border-ink-200 hover:bg-white/70"
+                      }`}
+                    >
+                      <div className="min-w-0">
+                        <p className="text-sm font-semibold text-ink-900">AI 总结</p>
+                        <p className="mt-1 text-xs leading-6 text-ink-500">
+                          {config.auto_summary ? "已开启" : "已关闭"}
+                        </p>
+                      </div>
+                      <div
+                        className={`flex h-7 w-7 items-center justify-center rounded-full ${
+                          config.auto_summary
+                            ? "bg-primary-500 text-white"
+                            : "border border-ink-200 bg-white text-ink-400"
+                        }`}
+                        aria-hidden="true"
+                      >
+                        {config.auto_summary ? <Check size={14} /> : <X size={14} />}
+                      </div>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => setConfig({ ...config, auto_mindmap: !config.auto_mindmap })}
+                      aria-pressed={config.auto_mindmap}
+                      className={`flex items-center justify-between gap-3 rounded-[24px] border p-4 text-left transition-all duration-200 ${
+                        config.auto_mindmap
+                          ? "border-primary-300 bg-primary-50/[0.35] shadow-soft"
+                          : "border-ink-100 bg-white/[0.55] hover:border-ink-200 hover:bg-white/70"
+                      }`}
+                    >
+                      <div className="min-w-0">
+                        <p className="text-sm font-semibold text-ink-900">思维导图</p>
+                        <p className="mt-1 text-xs leading-6 text-ink-500">
+                          {config.auto_mindmap ? "已开启" : "已关闭"}
+                        </p>
+                      </div>
+                      <div
+                        className={`flex h-7 w-7 items-center justify-center rounded-full ${
+                          config.auto_mindmap
+                            ? "bg-primary-500 text-white"
+                            : "border border-ink-200 bg-white text-ink-400"
+                        }`}
+                        aria-hidden="true"
+                      >
+                        {config.auto_mindmap ? <Check size={14} /> : <X size={14} />}
+                      </div>
+                    </button>
+                  </div>
+                </SectionField>
               </div>
             </div>
           </div>

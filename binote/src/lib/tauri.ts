@@ -44,6 +44,10 @@ export interface AppConfig {
   bilibili_dede_user_id: string | null;
   /** Cookie 获取时间戳 */
   bilibili_cookie_ts: number | null;
+  /** 转录完成后自动生成 AI 总结（默认 true） */
+  auto_summary: boolean;
+  /** 转录完成后自动生成思维导图（默认 true） */
+  auto_mindmap: boolean;
 }
 
 /** SESSDATA 验证结果 */

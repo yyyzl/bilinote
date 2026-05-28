@@ -15,6 +15,7 @@ const STREAM_PROGRESS_INTERVAL: Duration = Duration::from_millis(350);
 const SUMMARY_SYSTEM: &str = "你是一个专业的视频笔记助手，擅长从视频内容中提取关键信息并生成结构清晰、重点突出的学习笔记。你的笔记风格简洁专业，善于使用 Markdown 格式让内容层次分明、易于阅读。";
 const MINDMAP_SYSTEM: &str = "你是一个专业的思维导图生成助手，擅长从视频内容中提取核心概念和层级关系，生成结构清晰的 Mermaid 思维导图代码。";
 
+#[derive(Clone)]
 pub struct LlmClient {
     client: Client,
     api_key: String,

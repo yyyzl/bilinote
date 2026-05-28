@@ -7,7 +7,7 @@ use tauri::{AppHandle, Manager};
 const CONFIG_FILE: &str = "config.json";
 const NOTES_FILE: &str = "notes.json";
 
-#[derive(Debug, Serialize, Deserialize, Clone, Default)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct AppConfig {
     /// ASR 提供商选择
     #[serde(default)]
@@ -33,6 +33,36 @@ pub struct AppConfig {
     /// Cookie 获取时间戳（用于判断是否需要刷新）
     #[serde(default)]
     pub bilibili_cookie_ts: Option<i64>,
+    /// 转录完成后是否自动生成 AI 总结（默认开启，保持旧行为）
+    #[serde(default = "default_true")]
+    pub auto_summary: bool,
+    /// 转录完成后是否自动生成思维导图（默认开启，保持旧行为）
+    #[serde(default = "default_true")]
+    pub auto_mindmap: bool,
+}
+
+fn default_true() -> bool {
+    true
+}
+
+impl Default for AppConfig {
+    fn default() -> Self {
+        Self {
+            asr_provider: AsrProvider::default(),
+            asr_api_key: None,
+            sensevoice_api_key: None,
+            llm_api_key: None,
+            llm_base_url: None,
+            llm_model: None,
+            bilibili_sessdata: None,
+            bilibili_bili_jct: None,
+            bilibili_refresh_token: None,
+            bilibili_dede_user_id: None,
+            bilibili_cookie_ts: None,
+            auto_summary: true,
+            auto_mindmap: true,
+        }
+    }
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
