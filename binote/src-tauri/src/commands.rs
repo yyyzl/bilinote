@@ -1,7 +1,8 @@
 use crate::{
-    asr::{AsrClient, AsrProvider},
+    asr::{AsrClient, AsrProvider, DashScopeClient, SenseVoiceClient},
     auth::{BiliAuth, BiliCredentials, QrcodeInfo, QrcodePollResult, RefreshResult},
     bilibili::{BilibiliClient, LoginStatus, PageInfo, VideoInfo},
+    connection_test::ConnectionTestResult,
     error::Result,
     llm::LlmClient,
     notification::{send_notification, NotificationType},
@@ -1030,6 +1031,48 @@ async fn mindmap_background(note_id: String, app: AppHandle) -> Result<Note> {
 pub async fn verify_sessdata(sessdata: String) -> Result<LoginStatus> {
     let bili = BilibiliClient::new();
     bili.check_login_status(&sessdata).await
+}
+
+/// 测试 LLM API 连通性
+///
+/// 不依赖已保存的配置，直接使用传入的参数发起最小开销请求。
+/// 空字段会使用与正式调用一致的默认值。
+#[tauri::command]
+pub async fn test_llm_connection(
+    api_key: String,
+    base_url: Option<String>,
+    model: Option<String>,
+) -> Result<ConnectionTestResult> {
+    if api_key.trim().is_empty() {
+        return Ok(ConnectionTestResult::error("请先填写 API Key", 0));
+    }
+
+    let base_url = base_url
+        .filter(|s| !s.trim().is_empty())
+        .unwrap_or_else(|| "https://api.openai.com/v1".into());
+    let model = model
+        .filter(|s| !s.trim().is_empty())
+        .unwrap_or_else(|| "gpt-4o-mini".into());
+
+    let client = LlmClient::new(api_key, base_url, model);
+    Ok(client.test_connection().await)
+}
+
+/// 测试 ASR API 连通性
+#[tauri::command]
+pub async fn test_asr_connection(
+    provider: AsrProvider,
+    api_key: String,
+) -> Result<ConnectionTestResult> {
+    if api_key.trim().is_empty() {
+        return Ok(ConnectionTestResult::error("请先填写 API Key", 0));
+    }
+
+    let result = match provider {
+        AsrProvider::DashScope => DashScopeClient::new(api_key).test_connection().await,
+        AsrProvider::SenseVoice => SenseVoiceClient::new(api_key).test_connection().await,
+    };
+    Ok(result)
 }
 
 /// 取消正在运行的任务

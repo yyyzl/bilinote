@@ -2,6 +2,7 @@ pub mod asr;
 pub mod auth;
 pub mod bilibili;
 pub mod commands;
+pub mod connection_test;
 pub mod error;
 pub mod llm;
 pub mod notification;
@@ -49,6 +50,8 @@ pub fn run() {
             commands::start_mindmap,
             commands::cancel_task,
             commands::verify_sessdata,
+            commands::test_llm_connection,
+            commands::test_asr_connection,
             commands::qrcode_generate,
             commands::qrcode_poll,
             commands::get_login_status,

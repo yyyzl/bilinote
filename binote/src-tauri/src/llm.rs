@@ -1,11 +1,13 @@
+use crate::connection_test::{network_error_message, status_to_result, ConnectionTestResult};
 use crate::error::{AppError, Result};
 use crate::retry::{retry_async, RetryConfig, RetryContext};
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(120);
+const TEST_TIMEOUT: Duration = Duration::from_secs(15);
 
 pub struct LlmClient {
     client: Client,
@@ -215,6 +217,86 @@ mindmap
             .to_string();
 
         Ok(cleaned)
+    }
+
+    /// 测试 LLM API 连通性
+    ///
+    /// 发起一个最小开销的 chat completion（max_tokens=1），用于校验：
+    /// - Base URL 是否可达
+    /// - API Key 是否有效
+    /// - Model 名称是否存在
+    pub async fn test_connection(&self) -> ConnectionTestResult {
+        let client = match Client::builder()
+            .connect_timeout(CONNECT_TIMEOUT)
+            .timeout(TEST_TIMEOUT)
+            .build()
+        {
+            Ok(c) => c,
+            Err(e) => {
+                return ConnectionTestResult::error(format!("HTTP 客户端初始化失败: {}", e), 0)
+            }
+        };
+
+        let request = ChatRequest {
+            model: self.model.clone(),
+            messages: vec![ChatMessage {
+                role: "user".into(),
+                content: "hi".into(),
+            }],
+        };
+
+        let url = format!("{}/chat/completions", self.base_url);
+        let started = Instant::now();
+
+        let response = match client
+            .post(&url)
+            .header("Authorization", format!("Bearer {}", self.api_key))
+            .json(&request)
+            .send()
+            .await
+        {
+            Ok(r) => r,
+            Err(e) => {
+                let latency = started.elapsed().as_millis() as u64;
+                return ConnectionTestResult::error(network_error_message(&e), latency);
+            }
+        };
+
+        let status = response.status();
+        let latency = started.elapsed().as_millis() as u64;
+
+        if status.is_success() {
+            // 尝试读取响应体确认协议兼容性
+            match response.json::<ChatResponse>().await {
+                Ok(resp) if resp.error.is_none() => ConnectionTestResult::success(
+                    format!("连通正常 · 模型 {} · {}ms", self.model, latency),
+                    latency,
+                ),
+                Ok(resp) => ConnectionTestResult::error(
+                    format!(
+                        "API 返回错误: {}",
+                        resp.error.map(|e| e.message).unwrap_or_default()
+                    ),
+                    latency,
+                ),
+                Err(e) => ConnectionTestResult::error(
+                    format!("响应解析失败（可能不是 OpenAI 兼容协议）: {}", e),
+                    latency,
+                ),
+            }
+        } else {
+            // 非 2xx 返回，提取详细错误信息
+            let body_text = response.text().await.unwrap_or_default();
+            let mut result = status_to_result(status, "LLM", latency, None);
+            if !body_text.is_empty() {
+                if let Ok(resp) = serde_json::from_str::<ChatResponse>(&body_text) {
+                    if let Some(err) = resp.error {
+                        result.message = format!("{}（{}）", result.message, err.message);
+                    }
+                }
+            }
+            result
+        }
     }
 
     /// 带重试的思维导图生成

@@ -52,6 +52,20 @@ export interface LoginStatus {
   uname: string | null;
 }
 
+/** API 连通性测试结果
+ *
+ * severity:
+ * - "ok"      连通成功
+ * - "warning" 可达但受限（如 429 限流）
+ * - "error"   失败
+ */
+export interface ConnectionTestResult {
+  ok: boolean;
+  severity: "ok" | "warning" | "error";
+  message: string;
+  latency_ms: number;
+}
+
 export interface TaskInfo {
   status: string;
   progress: string;
@@ -99,6 +113,20 @@ export const startMindmap = (noteId: string) => invoke<string>("start_mindmap", 
 export const getTaskStatus = (taskId: string) => invoke<TaskInfo>("get_task_status", { taskId });
 export const consumeNotificationNavTarget = () => invoke<string | null>("consume_notification_nav_target");
 export const verifySessdata = (sessdata: string) => invoke<LoginStatus>("verify_sessdata", { sessdata });
+
+export const testLlmConnection = (
+  apiKey: string,
+  baseUrl: string | null,
+  model: string | null,
+) =>
+  invoke<ConnectionTestResult>("test_llm_connection", {
+    apiKey,
+    baseUrl,
+    model,
+  });
+
+export const testAsrConnection = (provider: AsrProvider, apiKey: string) =>
+  invoke<ConnectionTestResult>("test_asr_connection", { provider, apiKey });
 
 // ====== 扫码登录 ======
 export const qrcodeGenerate = () => invoke<QrcodeInfo>("qrcode_generate");

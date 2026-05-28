@@ -13,8 +13,11 @@ pub use sensevoice::SenseVoiceClient;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "lowercase")]
 pub enum AsrProvider {
-    #[default]
     DashScope,
+    /// 默认推荐：硅基流动 SenseVoice
+    /// - 无明显时长限制
+    /// - 速度快、性价比高
+    #[default]
     SenseVoice,
 }
 

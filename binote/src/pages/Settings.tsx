@@ -8,6 +8,7 @@ import {
   Cpu,
   Loader2,
   LogOut,
+  Plug,
   QrCode,
   RefreshCw,
   Save,
@@ -25,6 +26,58 @@ import ErrorModal, { formatError } from "../components/ErrorModal";
 
 type SessdataStatus = "idle" | "verifying" | "valid" | "expired" | "error";
 type QrLoginState = "idle" | "loading" | "showing" | "scanned" | "success" | "expired" | "error";
+type ConnectionTestStatus = "idle" | "testing" | "ok" | "warning" | "error";
+
+interface ConnectionTestState {
+  status: ConnectionTestStatus;
+  message: string;
+}
+
+const INITIAL_TEST_STATE: ConnectionTestState = { status: "idle", message: "" };
+
+function ConnectionTestRow({
+  label,
+  state,
+  onTest,
+  disabled,
+}: {
+  label: string;
+  state: ConnectionTestState;
+  onTest: () => void;
+  disabled?: boolean;
+}) {
+  return (
+    <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+      <button
+        onClick={onTest}
+        disabled={state.status === "testing" || disabled}
+        className="button-secondary"
+      >
+        {state.status === "testing" ? <Loader2 size={16} className="animate-spin" /> : <Plug size={16} />}
+        {state.status === "testing" ? "测试中..." : label}
+      </button>
+
+      {state.status === "ok" && (
+        <div className="inline-flex items-center gap-2 rounded-full border border-sage-200 bg-sage-100/70 px-4 py-2 text-sm font-semibold text-sage-700">
+          <ShieldCheck size={16} />
+          {state.message}
+        </div>
+      )}
+      {state.status === "warning" && (
+        <div className="inline-flex items-center gap-2 rounded-full border border-gold-300 bg-gold-100/80 px-4 py-2 text-sm font-semibold text-[#8e6532]">
+          <ShieldX size={16} />
+          {state.message}
+        </div>
+      )}
+      {state.status === "error" && (
+        <div className="inline-flex items-center gap-2 rounded-full border border-red-200 bg-red-50 px-4 py-2 text-sm font-semibold text-red-600">
+          <ShieldAlert size={16} />
+          {state.message}
+        </div>
+      )}
+    </div>
+  );
+}
 
 function SectionField({
   label,
@@ -46,7 +99,7 @@ function SectionField({
 
 export default function Settings() {
   const [config, setConfig] = useState<api.AppConfig>({
-    asr_provider: "dashscope",
+    asr_provider: "sensevoice",
     asr_api_key: null,
     sensevoice_api_key: null,
     llm_api_key: null,
@@ -72,6 +125,10 @@ export default function Settings() {
   const [loginChecked, setLoginChecked] = useState(false);
   const [isLoggedIn, setIsLoggedIn] = useState(false);
   const [loginUname, setLoginUname] = useState<string>("");
+
+  const [llmTest, setLlmTest] = useState<ConnectionTestState>(INITIAL_TEST_STATE);
+  const [dashscopeTest, setDashscopeTest] = useState<ConnectionTestState>(INITIAL_TEST_STATE);
+  const [sensevoiceTest, setSensevoiceTest] = useState<ConnectionTestState>(INITIAL_TEST_STATE);
 
   const saveTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const qrPollTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -286,6 +343,55 @@ export default function Settings() {
     } catch (e) {
       if (isMountedRef.current) {
         setError(formatError(e));
+      }
+    }
+  };
+
+  const mapTestResult = (result: api.ConnectionTestResult): ConnectionTestState => ({
+    status: result.severity,
+    message: result.message,
+  });
+
+  const handleTestLlm = async () => {
+    if (!config.llm_api_key) {
+      setLlmTest({ status: "error", message: "请先填写 API Key" });
+      return;
+    }
+    setLlmTest({ status: "testing", message: "" });
+    try {
+      const result = await api.testLlmConnection(
+        config.llm_api_key,
+        config.llm_base_url,
+        config.llm_model,
+      );
+      if (isMountedRef.current) {
+        setLlmTest(mapTestResult(result));
+      }
+    } catch (e) {
+      if (isMountedRef.current) {
+        setLlmTest({ status: "error", message: formatError(e) });
+      }
+    }
+  };
+
+  const handleTestAsr = async (provider: api.AsrProvider) => {
+    const apiKey =
+      provider === "dashscope" ? config.asr_api_key : config.sensevoice_api_key;
+    const setter = provider === "dashscope" ? setDashscopeTest : setSensevoiceTest;
+
+    if (!apiKey) {
+      setter({ status: "error", message: "请先填写 API Key" });
+      return;
+    }
+    setter({ status: "testing", message: "" });
+    try {
+      const result = await api.testAsrConnection(provider, apiKey);
+      if (isMountedRef.current) {
+        setter(mapTestResult(result));
+      }
+    } catch (e) {
+      if (isMountedRef.current) {
+        setter({ status: "error", message: formatError(e) });
       }
     }
   };
@@ -557,14 +663,21 @@ export default function Settings() {
                       }`}>
                         <Cloud size={20} />
                       </div>
-                      {config.asr_provider === "dashscope" && (
-                        <div className="flex h-7 w-7 items-center justify-center rounded-full bg-primary-500 text-white">
-                          <Check size={14} />
-                        </div>
-                      )}
+                      <div className="flex items-center gap-2">
+                        <span className="inline-flex items-center gap-1 rounded-full border border-gold-300 bg-gold-100/80 px-2.5 py-1 text-[11px] font-semibold text-[#8e6532]">
+                          ≤ 5 分钟
+                        </span>
+                        {config.asr_provider === "dashscope" && (
+                          <div className="flex h-7 w-7 items-center justify-center rounded-full bg-primary-500 text-white">
+                            <Check size={14} />
+                          </div>
+                        )}
+                      </div>
                     </div>
                     <p className="mt-5 text-base font-semibold text-ink-900">阿里云 DashScope</p>
-                    <p className="mt-2 text-sm leading-7 text-ink-500">准确度高，适合更稳定的识别场景。</p>
+                    <p className="mt-2 text-sm leading-7 text-ink-500">
+                      准确度高，但<span className="font-semibold text-[#8e6532]">单次音频最长 5 分钟</span>，超过会失败，仅推荐用于短视频。
+                    </p>
                   </button>
 
                   <button
@@ -583,14 +696,21 @@ export default function Settings() {
                       }`}>
                         <Cpu size={20} />
                       </div>
-                      {config.asr_provider === "sensevoice" && (
-                        <div className="flex h-7 w-7 items-center justify-center rounded-full bg-primary-500 text-white">
-                          <Check size={14} />
-                        </div>
-                      )}
+                      <div className="flex items-center gap-2">
+                        <span className="inline-flex items-center gap-1 rounded-full border border-sage-200 bg-sage-100/80 px-2.5 py-1 text-[11px] font-semibold text-sage-700">
+                          推荐
+                        </span>
+                        {config.asr_provider === "sensevoice" && (
+                          <div className="flex h-7 w-7 items-center justify-center rounded-full bg-primary-500 text-white">
+                            <Check size={14} />
+                          </div>
+                        )}
+                      </div>
                     </div>
-                    <p className="mt-5 text-base font-semibold text-ink-900">SenseVoice</p>
-                    <p className="mt-2 text-sm leading-7 text-ink-500">速度快，适合更高性价比的识别场景。</p>
+                    <p className="mt-5 text-base font-semibold text-ink-900">SenseVoice（硅基流动）</p>
+                    <p className="mt-2 text-sm leading-7 text-ink-500">
+                      无明显时长限制，速度快、性价比高，长视频首选。
+                    </p>
                   </button>
                 </div>
 
@@ -599,9 +719,18 @@ export default function Settings() {
                     <input
                       type="password"
                       value={config.asr_api_key || ""}
-                      onChange={(event) => setConfig({ ...config, asr_api_key: event.target.value })}
+                      onChange={(event) => {
+                        setConfig({ ...config, asr_api_key: event.target.value });
+                        setDashscopeTest(INITIAL_TEST_STATE);
+                      }}
                       placeholder="sk-..."
                       className="input-shell"
+                    />
+                    <ConnectionTestRow
+                      label="测试连接"
+                      state={dashscopeTest}
+                      onTest={() => void handleTestAsr("dashscope")}
+                      disabled={!config.asr_api_key}
                     />
                   </SectionField>
                 )}
@@ -611,9 +740,18 @@ export default function Settings() {
                     <input
                       type="password"
                       value={config.sensevoice_api_key || ""}
-                      onChange={(event) => setConfig({ ...config, sensevoice_api_key: event.target.value })}
+                      onChange={(event) => {
+                        setConfig({ ...config, sensevoice_api_key: event.target.value });
+                        setSensevoiceTest(INITIAL_TEST_STATE);
+                      }}
                       placeholder="sk-..."
                       className="input-shell"
+                    />
+                    <ConnectionTestRow
+                      label="测试连接"
+                      state={sensevoiceTest}
+                      onTest={() => void handleTestAsr("sensevoice")}
+                      disabled={!config.sensevoice_api_key}
                     />
                   </SectionField>
                 )}
@@ -632,7 +770,10 @@ export default function Settings() {
                   <input
                     type="password"
                     value={config.llm_api_key || ""}
-                    onChange={(event) => setConfig({ ...config, llm_api_key: event.target.value })}
+                    onChange={(event) => {
+                      setConfig({ ...config, llm_api_key: event.target.value });
+                      setLlmTest(INITIAL_TEST_STATE);
+                    }}
                     placeholder="sk-..."
                     className="input-shell"
                   />
@@ -642,7 +783,10 @@ export default function Settings() {
                   <input
                     type="text"
                     value={config.llm_base_url || ""}
-                    onChange={(event) => setConfig({ ...config, llm_base_url: event.target.value })}
+                    onChange={(event) => {
+                      setConfig({ ...config, llm_base_url: event.target.value });
+                      setLlmTest(INITIAL_TEST_STATE);
+                    }}
                     placeholder="https://api.openai.com/v1"
                     className="input-shell"
                   />
@@ -652,11 +796,21 @@ export default function Settings() {
                   <input
                     type="text"
                     value={config.llm_model || ""}
-                    onChange={(event) => setConfig({ ...config, llm_model: event.target.value })}
+                    onChange={(event) => {
+                      setConfig({ ...config, llm_model: event.target.value });
+                      setLlmTest(INITIAL_TEST_STATE);
+                    }}
                     placeholder="gpt-4o-mini"
                     className="input-shell"
                   />
                 </SectionField>
+
+                <ConnectionTestRow
+                  label="测试 LLM 连接"
+                  state={llmTest}
+                  onTest={() => void handleTestLlm()}
+                  disabled={!config.llm_api_key}
+                />
               </div>
             </div>
           </div>

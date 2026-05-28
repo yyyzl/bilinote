@@ -1,10 +1,14 @@
+use crate::connection_test::{network_error_message, status_to_result, ConnectionTestResult};
 use crate::error::{AppError, Result};
 use base64::{engine::general_purpose::STANDARD, Engine};
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
+use std::time::{Duration, Instant};
 
 const ASR_ENDPOINT: &str =
     "https://dashscope.aliyuncs.com/api/v1/services/aigc/multimodal-generation/generation";
+const TEST_ENDPOINT: &str = "https://dashscope.aliyuncs.com/compatible-mode/v1/models";
+const TEST_TIMEOUT: Duration = Duration::from_secs(10);
 
 pub struct DashScopeClient {
     client: Client,
@@ -69,6 +73,42 @@ impl DashScopeClient {
             .unwrap_or_default();
 
         Ok(text)
+    }
+
+    /// 测试 DashScope API Key 连通性
+    ///
+    /// 通过 GET /compatible-mode/v1/models 验证 Key 有效性，不消耗音频额度。
+    pub async fn test_connection(&self) -> ConnectionTestResult {
+        let client = match Client::builder().timeout(TEST_TIMEOUT).build() {
+            Ok(c) => c,
+            Err(e) => {
+                return ConnectionTestResult::error(format!("HTTP 客户端初始化失败: {}", e), 0)
+            }
+        };
+
+        let started = Instant::now();
+        let response = match client
+            .get(TEST_ENDPOINT)
+            .header("Authorization", format!("Bearer {}", self.api_key))
+            .send()
+            .await
+        {
+            Ok(r) => r,
+            Err(e) => {
+                let latency = started.elapsed().as_millis() as u64;
+                return ConnectionTestResult::error(network_error_message(&e), latency);
+            }
+        };
+
+        let status = response.status();
+        let latency = started.elapsed().as_millis() as u64;
+        let success_detail = if status.is_success() {
+            Some(format!("DashScope Key 有效 · {}ms", latency))
+        } else {
+            None
+        };
+
+        status_to_result(status, "DashScope", latency, success_detail)
     }
 }
 
