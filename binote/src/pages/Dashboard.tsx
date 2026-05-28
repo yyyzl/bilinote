@@ -107,7 +107,10 @@ export default function Dashboard() {
             const taskInfo = await api.getTaskStatus(taskId);
             if (!isMountedRef.current) return;
 
-            setProgress(taskInfo.progress);
+            // 注意：不再用 taskInfo.progress 覆盖 setProgress。
+            // task.progress 字段在转录主流程中很少更新（初始值为"正在准备..."），
+            // 而真实的阶段文案通过 emit 事件实时 push（由 onProgress 监听）。
+            // 如果在这里覆盖，会把事件刚推送的最新文案拉回旧值，造成闪烁。
 
             if (taskInfo.status === "completed") {
               clearAllTimers();

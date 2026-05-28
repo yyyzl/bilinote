@@ -535,7 +535,7 @@ pub async fn start_transcribe(
                 state.task_handles.lock().unwrap().remove(&task_id_clone);
                 return;
             }
-            result = transcribe_background(bvid, app_clone.clone(), cancel_token_clone.clone()) => result
+            result = transcribe_background(bvid, task_id_clone.clone(), app_clone.clone(), cancel_token_clone.clone()) => result
         };
 
         // 任务完成，清除运行标志
@@ -645,6 +645,7 @@ pub async fn get_task_status(state: State<'_, AppState>, task_id: String) -> Res
 
 async fn transcribe_background(
     bvid: String,
+    task_id: String,
     app: AppHandle,
     cancel_token: CancellationToken,
 ) -> Result<TranscribeResult> {
@@ -707,10 +708,14 @@ async fn transcribe_background(
     // 创建 LLM 客户端（内部 reqwest::Client 是 Arc，clone 廉价）
     let llm = LlmClient::new(llm_key, base_url, model);
 
-    // 准备并行 future：未启用的项直接返回 None，避免无谓的 LLM 调用
+    // 准备并行 future：未启用的项直接返回 None，避免无谓的 LLM 调用。
+    // 流式版本通过 update_stream_progress 同时写 task.progress + emit
+    // "transcribe:progress" 事件，让 Dashboard 在 LLM 阶段也能看到实时字数。
     let summary_fut = {
         let llm = llm.clone();
-        let app = app.clone();
+        let app_retry = app.clone();
+        let app_progress = app.clone();
+        let task_id_progress = task_id.clone();
         let transcript = note.transcript.clone();
         let title = note.title.clone();
         async move {
@@ -718,7 +723,7 @@ async fn transcribe_background(
                 return None;
             }
             Some(
-                llm.summarize_with_retry(
+                llm.summarize_stream_with_retry(
                     &transcript,
                     &title,
                     Some(move |ctx: RetryContext| {
@@ -732,8 +737,17 @@ async fn transcribe_background(
                                 ctx.attempt, ctx.max_attempts
                             ),
                         };
-                        let _ = app.emit("transcribe:progress", msg);
+                        let _ = app_retry.emit("transcribe:progress", msg);
                     }),
+                    move |chars: usize| {
+                        update_stream_progress(
+                            &app_progress,
+                            &task_id_progress,
+                            "transcribe:progress",
+                            "AI 总结产出中",
+                            chars,
+                        );
+                    },
                 )
                 .await,
             )
@@ -741,7 +755,9 @@ async fn transcribe_background(
     };
 
     let mindmap_fut = {
-        let app = app.clone();
+        let app_retry = app.clone();
+        let app_progress = app.clone();
+        let task_id_progress = task_id.clone();
         let transcript = note.transcript.clone();
         let title = note.title.clone();
         async move {
@@ -749,7 +765,7 @@ async fn transcribe_background(
                 return None;
             }
             Some(
-                llm.generate_mindmap_with_retry(
+                llm.generate_mindmap_stream_with_retry(
                     &transcript,
                     &title,
                     Some(move |ctx: RetryContext| {
@@ -763,8 +779,17 @@ async fn transcribe_background(
                                 ctx.attempt, ctx.max_attempts
                             ),
                         };
-                        let _ = app.emit("transcribe:progress", msg);
+                        let _ = app_retry.emit("transcribe:progress", msg);
                     }),
+                    move |chars: usize| {
+                        update_stream_progress(
+                            &app_progress,
+                            &task_id_progress,
+                            "transcribe:progress",
+                            "思维导图产出中",
+                            chars,
+                        );
+                    },
                 )
                 .await,
             )
