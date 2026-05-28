@@ -766,6 +766,19 @@ async fn transcribe_background(
     }
 }
 
+/// 流式生成期间更新任务进度：同时写入 task registry 的 progress 字段并 emit 事件，
+/// 两条通道文案一致，避免 poll 与事件互相覆盖造成闪烁。
+fn update_stream_progress(app: &AppHandle, task_id: &str, event: &str, label: &str, chars: usize) {
+    let msg = format!("{} · 已生成 {} 字", label, chars);
+    let state = app.state::<AppState>();
+    if let Ok(mut tasks) = state.tasks.lock() {
+        if let Some(info) = tasks.get_mut(task_id) {
+            info.progress = msg.clone();
+        }
+    }
+    let _ = app.emit(event, msg);
+}
+
 #[tauri::command]
 pub async fn start_summarize(
     state: State<'_, AppState>,
@@ -810,7 +823,7 @@ pub async fn start_summarize(
                 state.task_handles.lock().unwrap().remove(&task_id_clone);
                 return;
             }
-            result = summarize_background(note_id, app_clone.clone()) => result
+            result = summarize_background(note_id, task_id_clone.clone(), app_clone.clone()) => result
         };
 
         // 任务完成，清除运行标志
@@ -869,7 +882,7 @@ pub async fn start_summarize(
     Ok(task_id)
 }
 
-async fn summarize_background(note_id: String, app: AppHandle) -> Result<Note> {
+async fn summarize_background(note_id: String, task_id: String, app: AppHandle) -> Result<Note> {
     let state = app.state::<AppState>();
     let config = state.store.lock().unwrap().load_config()?;
 
@@ -893,9 +906,11 @@ async fn summarize_background(note_id: String, app: AppHandle) -> Result<Note> {
     let _ = app.emit("summarize:progress", "生成总结...");
 
     let llm = LlmClient::new(llm_key, base_url, model);
-    let app_clone = app.clone();
+    let app_retry = app.clone();
+    let app_progress = app.clone();
+    let task_id_progress = task_id.clone();
     let summary = llm
-        .summarize_with_retry(
+        .summarize_stream_with_retry(
             &note.transcript,
             &note.title,
             Some(move |ctx: RetryContext| {
@@ -909,8 +924,17 @@ async fn summarize_background(note_id: String, app: AppHandle) -> Result<Note> {
                         ctx.attempt, ctx.max_attempts
                     ),
                 };
-                let _ = app_clone.emit("summarize:progress", msg);
+                let _ = app_retry.emit("summarize:progress", msg);
             }),
+            move |chars: usize| {
+                update_stream_progress(
+                    &app_progress,
+                    &task_id_progress,
+                    "summarize:progress",
+                    "总结产出中",
+                    chars,
+                );
+            },
         )
         .await?;
 
@@ -964,7 +988,7 @@ pub async fn start_mindmap(
                 state.task_handles.lock().unwrap().remove(&task_id_clone);
                 return;
             }
-            result = mindmap_background(note_id, app_clone.clone()) => result
+            result = mindmap_background(note_id, task_id_clone.clone(), app_clone.clone()) => result
         };
 
         // 任务完成，清除运行标志
@@ -1023,7 +1047,7 @@ pub async fn start_mindmap(
     Ok(task_id)
 }
 
-async fn mindmap_background(note_id: String, app: AppHandle) -> Result<Note> {
+async fn mindmap_background(note_id: String, task_id: String, app: AppHandle) -> Result<Note> {
     let state = app.state::<AppState>();
     let config = state.store.lock().unwrap().load_config()?;
 
@@ -1047,9 +1071,11 @@ async fn mindmap_background(note_id: String, app: AppHandle) -> Result<Note> {
     let _ = app.emit("mindmap:progress", "生成思维导图...");
 
     let llm = LlmClient::new(llm_key, base_url, model);
-    let app_clone = app.clone();
+    let app_retry = app.clone();
+    let app_progress = app.clone();
+    let task_id_progress = task_id.clone();
     let mindmap = llm
-        .generate_mindmap_with_retry(
+        .generate_mindmap_stream_with_retry(
             &note.transcript,
             &note.title,
             Some(move |ctx: RetryContext| {
@@ -1063,8 +1089,17 @@ async fn mindmap_background(note_id: String, app: AppHandle) -> Result<Note> {
                         ctx.attempt, ctx.max_attempts
                     ),
                 };
-                let _ = app_clone.emit("mindmap:progress", msg);
+                let _ = app_retry.emit("mindmap:progress", msg);
             }),
+            move |chars: usize| {
+                update_stream_progress(
+                    &app_progress,
+                    &task_id_progress,
+                    "mindmap:progress",
+                    "思维导图产出中",
+                    chars,
+                );
+            },
         )
         .await?;
 
