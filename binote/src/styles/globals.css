@@ -58,7 +58,7 @@
   }
 
   ::selection {
-    background: rgba(var(--color-primary), 0.18);
+    background: rgba(var(--color-primary), 0.32);
     color: rgb(var(--color-ink));
   }
 
