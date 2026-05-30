@@ -11,9 +11,11 @@ pub mod store;
 
 use commands::{cancel_all_tasks, AppState};
 use std::collections::HashMap;
-use std::sync::Mutex;
+use std::sync::atomic::AtomicUsize;
+use std::sync::{Arc, Mutex};
 use store::Store;
 use tauri::{Manager, RunEvent};
+use tokio::sync::Semaphore;
 use tokio_util::sync::CancellationToken;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -26,11 +28,20 @@ pub fn run() {
         .plugin(tauri_plugin_notification::init())
         .setup(move |app| {
             let store = Store::new(&app.handle())?;
+            // 从配置读取最大并发数（默认 2，限制在 1-5）。修改后需重启应用生效。
+            let max_concurrent = store
+                .load_config()
+                .map(|c| c.max_concurrent_transcribe)
+                .unwrap_or(2)
+                .clamp(1, 5);
             app.manage(AppState {
                 store: Mutex::new(store),
                 tasks: Mutex::new(HashMap::new()),
                 task_handles: Mutex::new(HashMap::new()),
                 global_cancel: global_cancel.clone(),
+                transcribe_gate: Arc::new(Semaphore::new(max_concurrent)),
+                llm_gate: Arc::new(Semaphore::new(max_concurrent)),
+                active_tasks: Arc::new(AtomicUsize::new(0)),
             });
             Ok(())
         })
@@ -71,7 +82,7 @@ pub fn run() {
             RunEvent::Exit => {
                 // 应用退出，清理所有资源
                 let state = app_handle.state::<AppState>();
-                cancel_all_tasks(&state);
+                cancel_all_tasks(app_handle, &state);
             }
             _ => {}
         }

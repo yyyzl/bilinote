@@ -11,14 +11,30 @@ import {
   NotebookText,
   Search,
   Settings,
-  Sparkles,
   Trash2,
+  TriangleAlert,
   X,
 } from "lucide-react";
 import * as api from "../lib/tauri";
 import ErrorModal, { formatError } from "../components/ErrorModal";
 import ConfirmModal from "../components/ConfirmModal";
 import { useShare } from "../contexts/ShareContext";
+
+type TaskStatus = "queued" | "running" | "completed" | "failed" | "cancelled";
+
+interface ActiveTask {
+  taskId: string;
+  bvid: string;
+  url: string;
+  title: string;
+  progress: string;
+  status: TaskStatus;
+  error?: string | null;
+}
+
+const POLL_INTERVAL_MS = 2000;
+// 终态任务在列表里停留多久后自动消失（毫秒）
+const AUTO_REMOVE_MS = { completed: 4000, cancelled: 2500 } as const;
 
 function formatNoteDate(timestamp: number): string {
   return new Date(timestamp * 1000).toLocaleDateString("zh-CN", {
@@ -36,9 +52,9 @@ function buildExcerpt(note: api.Note): string {
 export default function Dashboard() {
   const [input, setInput] = useState("");
   const [notes, setNotes] = useState<api.Note[]>([]);
-  const [loading, setLoading] = useState(false);
-  const [progress, setProgress] = useState("");
+  const [tasks, setTasks] = useState<ActiveTask[]>([]);
   const [error, setError] = useState("");
+  const [hint, setHint] = useState("");
   const [deleteTarget, setDeleteTarget] = useState<{ id: string; title: string } | null>(null);
 
   const [selectionMode, setSelectionMode] = useState(false);
@@ -49,12 +65,14 @@ export default function Dashboard() {
   const touchStartPosRef = useRef<{ x: number; y: number } | null>(null);
   const isLongPressActiveRef = useRef(false);
 
-  const { pendingUrl, consumeShare, isProcessing, setIsProcessing } = useShare();
+  const { pendingUrls, consumeShares, setIsProcessing } = useShare();
   const pollIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
-  const successTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const hintTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const removeTimersRef = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map());
   const isMountedRef = useRef(true);
-  const loadingRef = useRef(loading);
-  loadingRef.current = loading;
+  // 镜像最新 tasks，供轮询闭包读取（避免闭包捕获旧值）
+  const tasksRef = useRef<ActiveTask[]>([]);
+  tasksRef.current = tasks;
 
   const loadNotes = useCallback(async () => {
     try {
@@ -67,126 +85,211 @@ export default function Dashboard() {
     }
   }, []);
 
-  const clearAllTimers = useCallback(() => {
-    if (pollIntervalRef.current) {
-      clearInterval(pollIntervalRef.current);
-      pollIntervalRef.current = null;
-    }
-    if (successTimeoutRef.current) {
-      clearTimeout(successTimeoutRef.current);
-      successTimeoutRef.current = null;
-    }
-    if (longPressTimerRef.current) {
-      clearTimeout(longPressTimerRef.current);
-      longPressTimerRef.current = null;
+  const patchTask = useCallback((taskId: string, patch: Partial<ActiveTask>) => {
+    setTasks((prev) =>
+      prev.map((t) => (t.taskId === taskId ? { ...t, ...patch } : t))
+    );
+  }, []);
+
+  const removeTask = useCallback((taskId: string) => {
+    setTasks((prev) => prev.filter((t) => t.taskId !== taskId));
+    const timer = removeTimersRef.current.get(taskId);
+    if (timer) {
+      clearTimeout(timer);
+      removeTimersRef.current.delete(taskId);
     }
   }, []);
 
-  const startTranscription = useCallback(
-    async (url: string) => {
-      if (loadingRef.current) return;
+  const scheduleRemove = useCallback(
+    (taskId: string, delay: number) => {
+      if (removeTimersRef.current.has(taskId)) return;
+      const timer = setTimeout(() => {
+        removeTimersRef.current.delete(taskId);
+        if (isMountedRef.current) {
+          setTasks((prev) => prev.filter((t) => t.taskId !== taskId));
+        }
+      }, delay);
+      removeTimersRef.current.set(taskId, timer);
+    },
+    []
+  );
 
-      setInput(url);
-      setLoading(true);
-      setIsProcessing(true);
-      setError("");
-      setProgress("正在连接 Bilibili...");
+  const ensurePolling = useCallback(() => {
+    if (pollIntervalRef.current) return;
+    pollIntervalRef.current = setInterval(async () => {
+      const active = tasksRef.current.filter(
+        (t) => t.status === "queued" || t.status === "running"
+      );
+      if (active.length === 0) {
+        if (pollIntervalRef.current) {
+          clearInterval(pollIntervalRef.current);
+          pollIntervalRef.current = null;
+        }
+        return;
+      }
 
-      try {
-        const bvid = await api.parseLink(url);
-        const taskId = await api.startTranscribe(bvid);
-        clearAllTimers();
-
-        pollIntervalRef.current = setInterval(async () => {
-          if (!isMountedRef.current) {
-            clearAllTimers();
-            return;
-          }
-
+      await Promise.all(
+        active.map(async (t) => {
           try {
-            const taskInfo = await api.getTaskStatus(taskId);
+            const info = await api.getTaskStatus(t.taskId);
             if (!isMountedRef.current) return;
 
-            // 注意：不再用 taskInfo.progress 覆盖 setProgress。
-            // task.progress 字段在转录主流程中很少更新（初始值为"正在准备..."），
-            // 而真实的阶段文案通过 emit 事件实时 push（由 onProgress 监听）。
-            // 如果在这里覆盖，会把事件刚推送的最新文案拉回旧值，造成闪烁。
-
-            if (taskInfo.status === "completed") {
-              clearAllTimers();
+            if (info.status === "completed") {
               await loadNotes();
               if (!isMountedRef.current) return;
-
-              setInput("");
-              setProgress("完成，已归档到笔记库。");
-              successTimeoutRef.current = setTimeout(() => {
-                if (isMountedRef.current) {
-                  setProgress("");
-                }
-                successTimeoutRef.current = null;
-              }, 2000);
-              setLoading(false);
-              setIsProcessing(false);
-            } else if (taskInfo.status === "failed" || taskInfo.status === "cancelled") {
-              clearAllTimers();
-              if (isMountedRef.current) {
-                setError(taskInfo.error || "转写失败");
-                setLoading(false);
-                setIsProcessing(false);
-              }
+              patchTask(t.taskId, {
+                status: "completed",
+                progress: "已完成",
+                error: info.error ?? null,
+              });
+              scheduleRemove(t.taskId, AUTO_REMOVE_MS.completed);
+            } else if (info.status === "failed") {
+              patchTask(t.taskId, {
+                status: "failed",
+                progress: "失败",
+                error: info.error ?? "转写失败",
+              });
+            } else if (info.status === "cancelled") {
+              patchTask(t.taskId, {
+                status: "cancelled",
+                progress: "已取消",
+                error: info.error ?? null,
+              });
+              scheduleRemove(t.taskId, AUTO_REMOVE_MS.cancelled);
+            } else {
+              // queued / running：只同步状态；进度文本主要靠 onProgress 事件实时推送
+              patchTask(t.taskId, { status: info.status as TaskStatus });
             }
           } catch (e) {
-            clearAllTimers();
-            if (isMountedRef.current) {
-              setError(formatError(e));
-              setLoading(false);
-              setIsProcessing(false);
-            }
+            // 单个任务查询失败不影响其它任务
+            console.error(e);
           }
-        }, 2000);
-      } catch (e: unknown) {
+        })
+      );
+    }, POLL_INTERVAL_MS);
+  }, [loadNotes, patchTask, scheduleRemove]);
+
+  const startTranscription = useCallback(
+    async (url: string) => {
+      const trimmed = url.trim();
+      if (!trimmed) return;
+
+      setError("");
+      try {
+        const bvid = await api.parseLink(trimmed);
+
+        // 去重：同一视频若已在队列中（未结束），不重复入队
+        const existing = tasksRef.current.find(
+          (t) => t.bvid === bvid && (t.status === "queued" || t.status === "running")
+        );
+        if (existing) {
+          setHint(`「${existing.title}」已在处理队列中`);
+          if (hintTimeoutRef.current) clearTimeout(hintTimeoutRef.current);
+          hintTimeoutRef.current = setTimeout(() => {
+            if (isMountedRef.current) setHint("");
+          }, 2500);
+          return;
+        }
+
+        const taskId = await api.startTranscribe(bvid);
+        if (!isMountedRef.current) return;
+
+        setTasks((prev) => [
+          ...prev,
+          {
+            taskId,
+            bvid,
+            url: trimmed,
+            title: bvid,
+            progress: "正在准备…",
+            status: "queued",
+            error: null,
+          },
+        ]);
+        ensurePolling();
+
+        // 异步补全视频标题（失败则保留 bvid 占位，不影响转录）
+        void api
+          .getVideoInfo(bvid)
+          .then((info) => {
+            if (isMountedRef.current && info?.title) {
+              patchTask(taskId, { title: info.title });
+            }
+          })
+          .catch(() => {});
+      } catch (e) {
         if (isMountedRef.current) {
           setError(formatError(e));
-          setLoading(false);
-          setIsProcessing(false);
         }
       }
     },
-    [clearAllTimers, loadNotes, setIsProcessing]
+    [ensurePolling, patchTask]
   );
 
+  // 进度事件按 task_id 路由：只更新属于本页任务、且仍在运行的那一条
   useEffect(() => {
     isMountedRef.current = true;
     loadNotes();
 
     let cleanup: (() => void) | undefined;
-    api.onProgress((msg) => {
-      if (isMountedRef.current) {
-        setProgress(msg);
-      }
-    }).then((fn) => {
-      cleanup = fn;
-    });
+    api
+      .onProgress((taskId, message) => {
+        if (!isMountedRef.current) return;
+        setTasks((prev) =>
+          prev.map((t) =>
+            t.taskId === taskId && (t.status === "queued" || t.status === "running")
+              ? { ...t, progress: message, status: "running" }
+              : t
+          )
+        );
+      })
+      .then((fn) => {
+        cleanup = fn;
+      });
 
     return () => {
       isMountedRef.current = false;
       cleanup?.();
-      clearAllTimers();
-    };
-  }, [loadNotes, clearAllTimers]);
-
-  useEffect(() => {
-    if (pendingUrl && !loading) {
-      const url = consumeShare();
-      if (url) {
-        void startTranscription(url);
+      if (pollIntervalRef.current) {
+        clearInterval(pollIntervalRef.current);
+        pollIntervalRef.current = null;
       }
+      if (hintTimeoutRef.current) clearTimeout(hintTimeoutRef.current);
+      if (longPressTimerRef.current) clearTimeout(longPressTimerRef.current);
+      removeTimersRef.current.forEach((timer) => clearTimeout(timer));
+      removeTimersRef.current.clear();
+    };
+  }, [loadNotes]);
+
+  // 同步"是否有后台任务在处理"给 ShareContext
+  useEffect(() => {
+    const hasActive = tasks.some((t) => t.status === "queued" || t.status === "running");
+    setIsProcessing(hasActive);
+  }, [tasks, setIsProcessing]);
+
+  // 消费分享队列：逐条入队转录（提交即入队，由后端并发闸排队）
+  useEffect(() => {
+    if (pendingUrls.length === 0) return;
+    const urls = consumeShares();
+    for (const url of urls) {
+      void startTranscription(url);
     }
-  }, [pendingUrl, loading, consumeShare, startTranscription]);
+  }, [pendingUrls, consumeShares, startTranscription]);
 
   const handleSubmit = async () => {
-    if (!input.trim()) return;
-    await startTranscription(input);
+    const value = input.trim();
+    if (!value) return;
+    setInput("");
+    await startTranscription(value);
+  };
+
+  const handleCancelTask = async (taskId: string) => {
+    try {
+      await api.cancelTask(taskId);
+      patchTask(taskId, { progress: "正在取消…" });
+    } catch (e) {
+      console.error(e);
+    }
   };
 
   const handleDeleteClick = (note: api.Note, event: React.MouseEvent) => {
@@ -335,6 +438,16 @@ export default function Dashboard() {
   const mindmapCount = notes.filter((note) => note.mindmap).length;
   const latestNote = notes[0];
 
+  const activeCount = tasks.filter(
+    (t) => t.status === "queued" || t.status === "running"
+  ).length;
+  // 计算每个排队任务在队列中的位次
+  let queueCursor = 0;
+  const taskRows = tasks.map((t) => {
+    const queuePosition = t.status === "queued" ? ++queueCursor : 0;
+    return { task: t, queuePosition };
+  });
+
   return (
     <div className="app-shell">
       <header className="floating-topbar">
@@ -407,7 +520,7 @@ export default function Dashboard() {
                     变成一份真正值得阅读的笔记。
                   </h2>
                   <p className="max-w-2xl text-base leading-8 text-ink-500 sm:text-lg">
-                    粘贴链接后，BiNote 会自动转录、整理、总结，并把内容归档成适合回看和复盘的阅读单元。
+                    粘贴链接后，BiNote 会自动转录、整理、总结，并把内容归档成适合回看和复盘的阅读单元。支持同时处理多条视频。
                   </p>
               </div>
 
@@ -433,58 +546,113 @@ export default function Dashboard() {
                         }}
                         placeholder="粘贴 B 站视频链接，例如 https://www.bilibili.com/video/BV..."
                         className="input-shell pl-12 pr-5"
-                        disabled={loading}
                       />
                     </div>
                   </div>
 
                   <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                     <p className="text-sm leading-7 text-ink-500">
-                      支持直接粘贴链接，也支持 Android 分享到应用后自动开始处理。
+                      支持直接粘贴链接，也支持 Android 分享到应用。可连续添加多条，自动排队处理。
                     </p>
                     <button
                       onClick={() => void handleSubmit()}
-                      disabled={loading || !input.trim()}
+                      disabled={!input.trim()}
                       className="button-primary sm:min-w-[168px]"
                     >
-                      {loading ? <Loader2 size={16} className="animate-spin" /> : <ArrowRight size={16} />}
-                      {loading ? "处理中" : "开始解析"}
+                      <ArrowRight size={16} />
+                      添加到队列
                     </button>
                   </div>
+
+                  {hint && (
+                    <p className="inline-flex items-center gap-2 self-start rounded-full border border-gold-300 bg-gold-100/70 px-3 py-1.5 text-xs font-semibold text-[#8e6532]">
+                      <Clock3 size={13} />
+                      {hint}
+                    </p>
+                  )}
                 </div>
               </div>
 
-              {(loading || progress || error) && (
-                <div className="grid gap-3 sm:grid-cols-2">
-                  <div className="editorial-card-muted p-4">
-                    <div className="flex items-start gap-3">
-                      <div className="mt-0.5 flex h-10 w-10 items-center justify-center rounded-full border border-primary-200 bg-primary-50 text-primary-600">
-                        {loading ? <Loader2 size={18} className="animate-spin" /> : <Sparkles size={18} />}
-                      </div>
-                      <div className="min-w-0">
-                        <p className="editorial-kicker">Task Status</p>
-                        <p className="mt-2 text-sm font-semibold text-ink-800">
-                          {progress || (loading ? "正在处理中..." : "等待下一次操作")}
-                        </p>
-                        <p className="mt-2 text-xs leading-6 text-ink-400">
-                          {isProcessing ? "当前正在后台处理新的分享或转录任务。" : "当前没有进行中的后台任务。"}
-                        </p>
-                      </div>
+              {tasks.length > 0 && (
+                <div className="editorial-card-muted p-4 sm:p-5">
+                  <div className="mb-3 flex items-center justify-between">
+                    <p className="editorial-kicker">Processing Queue</p>
+                    <div className="editorial-chip !px-2.5 !py-1 !text-[10px] !tracking-[0.2em]">
+                      {activeCount > 0 ? `${activeCount} 个进行中` : "已全部完成"}
                     </div>
                   </div>
+                  <ul className="space-y-2">
+                    {taskRows.map(({ task, queuePosition }) => (
+                      <li
+                        key={task.taskId}
+                        className="flex items-center gap-3 rounded-[20px] border border-ink-100/80 bg-paper-50/[0.85] px-4 py-3"
+                      >
+                        <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full border">
+                          {task.status === "running" && (
+                            <span className="flex h-9 w-9 items-center justify-center rounded-full border border-primary-200 bg-primary-50 text-primary-600">
+                              <Loader2 size={16} className="animate-spin" />
+                            </span>
+                          )}
+                          {task.status === "queued" && (
+                            <span className="flex h-9 w-9 items-center justify-center rounded-full border border-ink-200 bg-canvas-50 text-ink-400">
+                              <Clock3 size={16} />
+                            </span>
+                          )}
+                          {task.status === "completed" && (
+                            <span className="flex h-9 w-9 items-center justify-center rounded-full border border-sage-200 bg-sage-100/70 text-sage-700">
+                              <Check size={16} strokeWidth={3} />
+                            </span>
+                          )}
+                          {task.status === "failed" && (
+                            <span className="flex h-9 w-9 items-center justify-center rounded-full border border-red-200 bg-red-50 text-red-600">
+                              <TriangleAlert size={15} />
+                            </span>
+                          )}
+                          {task.status === "cancelled" && (
+                            <span className="flex h-9 w-9 items-center justify-center rounded-full border border-ink-200 bg-canvas-50 text-ink-400">
+                              <X size={16} />
+                            </span>
+                          )}
+                        </div>
 
-                  {error && (
-                    <button
-                      onClick={() => setError(error)}
-                      className="editorial-card-muted flex cursor-pointer items-start gap-3 border-red-100 bg-red-50/70 p-4 text-left transition-colors duration-200 hover:bg-red-50"
-                    >
-                      <div className="mt-0.5 h-3 w-3 rounded-full bg-red-500" />
-                      <div>
-                        <p className="editorial-kicker text-red-500">Action Required</p>
-                        <p className="mt-2 text-sm font-semibold text-red-700">出现错误，点击查看详情</p>
-                      </div>
-                    </button>
-                  )}
+                        <div className="min-w-0 flex-1">
+                          <p className="truncate text-sm font-semibold text-ink-800">{task.title}</p>
+                          <p
+                            className={`truncate text-xs leading-5 ${
+                              task.status === "failed" ? "text-red-600" : "text-ink-400"
+                            }`}
+                          >
+                            {task.status === "queued"
+                              ? `排队中${queuePosition > 0 ? `（第 ${queuePosition} 位）` : "…"}`
+                              : task.status === "failed"
+                                ? task.error || "失败"
+                                : task.progress}
+                          </p>
+                        </div>
+
+                        {(task.status === "queued" || task.status === "running") && (
+                          <button
+                            onClick={() => void handleCancelTask(task.taskId)}
+                            className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-ink-100 bg-canvas-50 text-ink-400 transition-colors duration-200 hover:bg-red-50 hover:text-red-600"
+                            title="取消任务"
+                            aria-label={`取消 ${task.title}`}
+                          >
+                            <X size={15} />
+                          </button>
+                        )}
+                        {(task.status === "failed" || task.status === "cancelled") && (
+                          <button
+                            onClick={() => removeTask(task.taskId)}
+                            className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-ink-100 bg-canvas-50 text-ink-400 transition-colors duration-200 hover:bg-ink-100"
+                            title="移除"
+                            aria-label={`移除 ${task.title}`}
+                          >
+                            <X size={15} />
+                          </button>
+                        )}
+                      </li>
+                    ))}
+                  </ul>
                 </div>
               )}
             </div>
@@ -541,7 +709,7 @@ export default function Dashboard() {
                         1
                       </div>
                       <p className="text-sm leading-6 text-ink-500">
-                        <span className="font-semibold text-ink-800">贴入视频链接</span> — 支持手动粘贴和 Android 系统分享。
+                        <span className="font-semibold text-ink-800">贴入视频链接</span> — 支持手动粘贴和 Android 系统分享，可连续添加多条。
                       </p>
                     </div>
                     <div className="flex items-start gap-3">
@@ -549,7 +717,7 @@ export default function Dashboard() {
                         2
                       </div>
                       <p className="text-sm leading-6 text-ink-500">
-                        <span className="font-semibold text-ink-800">自动转录与总结</span> — 优先字幕，必要时回退 ASR。
+                        <span className="font-semibold text-ink-800">自动转录与总结</span> — 优先字幕，必要时回退 ASR；按并发上限排队处理。
                       </p>
                     </div>
                     <div className="flex items-start gap-3">

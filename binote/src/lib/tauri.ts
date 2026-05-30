@@ -48,6 +48,8 @@ export interface AppConfig {
   auto_summary: boolean;
   /** 转录完成后自动生成思维导图（默认 true） */
   auto_mindmap: boolean;
+  /** 最大同时转录任务数（1-5，默认 2，修改后需重启应用生效） */
+  max_concurrent_transcribe: number;
 }
 
 /** SESSDATA 验证结果 */
@@ -115,6 +117,7 @@ export const startTranscribe = (bvid: string) => invoke<string>("start_transcrib
 export const startSummarize = (noteId: string) => invoke<string>("start_summarize", { noteId });
 export const startMindmap = (noteId: string) => invoke<string>("start_mindmap", { noteId });
 export const getTaskStatus = (taskId: string) => invoke<TaskInfo>("get_task_status", { taskId });
+export const cancelTask = (taskId: string) => invoke("cancel_task", { taskId });
 export const consumeNotificationNavTarget = () => invoke<string | null>("consume_notification_nav_target");
 export const verifySessdata = (sessdata: string) => invoke<LoginStatus>("verify_sessdata", { sessdata });
 
@@ -138,10 +141,30 @@ export const qrcodePoll = (qrcodeKey: string) => invoke<QrcodePollResult>("qrcod
 export const getLoginStatus = () => invoke<LoginStatus>("get_login_status");
 export const logoutBilibili = () => invoke("logout_bilibili");
 
-export const onProgress = async (callback: (msg: string) => void) => {
-  const unlisten1 = await listen<string>("transcribe:progress", (e) => callback(e.payload));
-  const unlisten2 = await listen<string>("summarize:progress", (e) => callback(e.payload));
-  const unlisten3 = await listen<string>("mindmap:progress", (e) => callback(e.payload));
+/** 进度事件 payload：携带 task_id，使并发任务的进度能按任务分流，互不串台 */
+export interface ProgressPayload {
+  task_id: string;
+  message: string;
+}
+
+export type ProgressKind = "transcribe" | "summarize" | "mindmap";
+
+/**
+ * 监听进度事件。回调携带 taskId，调用方据此把进度路由到对应任务，
+ * 不属于自己任务的事件应被忽略（并发场景下避免串台）。
+ */
+export const onProgress = async (
+  callback: (taskId: string, message: string, kind: ProgressKind) => void
+) => {
+  const unlisten1 = await listen<ProgressPayload>("transcribe:progress", (e) =>
+    callback(e.payload.task_id, e.payload.message, "transcribe")
+  );
+  const unlisten2 = await listen<ProgressPayload>("summarize:progress", (e) =>
+    callback(e.payload.task_id, e.payload.message, "summarize")
+  );
+  const unlisten3 = await listen<ProgressPayload>("mindmap:progress", (e) =>
+    callback(e.payload.task_id, e.payload.message, "mindmap")
+  );
   return () => {
     unlisten1();
     unlisten2();

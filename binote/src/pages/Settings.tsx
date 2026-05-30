@@ -112,6 +112,7 @@ export default function Settings() {
     bilibili_cookie_ts: null,
     auto_summary: true,
     auto_mindmap: true,
+    max_concurrent_transcribe: 2,
   });
   const [saved, setSaved] = useState(false);
   const [error, setError] = useState("");
@@ -877,6 +878,41 @@ export default function Settings() {
                   </div>
                 </SectionField>
               </div>
+            </div>
+          </div>
+
+          <div className="editorial-card p-5 sm:p-6 lg:p-8">
+            <div className="border-b border-ink-100 pb-6">
+              <p className="editorial-kicker">Concurrency</p>
+              <h2 className="section-display mt-2">转录并发</h2>
+              <p className="mt-2 max-w-2xl text-sm leading-7 text-ink-500">
+                同时处理多条视频时的最大并发数。数值越大越快，但更容易触发 ASR / LLM 服务的限流（429）。免费额度建议保持 2，付费高额度可适当调高。修改后需重启应用生效。
+              </p>
+            </div>
+
+            <div className="pt-6">
+              <SectionField
+                label="最大同时转录任务数"
+                description="超过上限的任务会自动进入队列，依次处理。"
+              >
+                <div className="flex flex-wrap gap-2">
+                  {[1, 2, 3, 4, 5].map((n) => (
+                    <button
+                      key={n}
+                      type="button"
+                      onClick={() => setConfig({ ...config, max_concurrent_transcribe: n })}
+                      aria-pressed={(config.max_concurrent_transcribe ?? 2) === n}
+                      className={`flex h-12 w-12 items-center justify-center rounded-2xl border text-base font-semibold transition-all duration-200 ${
+                        (config.max_concurrent_transcribe ?? 2) === n
+                          ? "border-primary-300 bg-primary-50/[0.5] text-primary-700 shadow-soft"
+                          : "border-ink-100 bg-white/[0.55] text-ink-500 hover:border-ink-200 hover:bg-white/70"
+                      }`}
+                    >
+                      {n}
+                    </button>
+                  ))}
+                </div>
+              </SectionField>
             </div>
           </div>
 

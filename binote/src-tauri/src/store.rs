@@ -39,10 +39,17 @@ pub struct AppConfig {
     /// 转录完成后是否自动生成思维导图（默认开启，保持旧行为）
     #[serde(default = "default_true")]
     pub auto_mindmap: bool,
+    /// 最大同时转录任务数（1-5，默认 2）。修改后需重启应用生效。
+    #[serde(default = "default_max_concurrent")]
+    pub max_concurrent_transcribe: usize,
 }
 
 fn default_true() -> bool {
     true
+}
+
+fn default_max_concurrent() -> usize {
+    2
 }
 
 impl Default for AppConfig {
@@ -61,6 +68,7 @@ impl Default for AppConfig {
             bilibili_cookie_ts: None,
             auto_summary: true,
             auto_mindmap: true,
+            max_concurrent_transcribe: 2,
         }
     }
 }
@@ -118,7 +126,7 @@ impl Store {
         let path = self.app_dir.join(CONFIG_FILE);
         let content = serde_json::to_string_pretty(config)
             .map_err(|e| AppError::StoreError(e.to_string()))?;
-        std::fs::write(&path, content).map_err(|e| AppError::StoreError(e.to_string()))
+        atomic_write(&path, &content)
     }
 
     pub fn load_notes(&self) -> Result<Vec<Note>> {
@@ -143,6 +151,26 @@ impl Store {
         self.save_notes(&notes)
     }
 
+    /// 字段级原子更新：在单次调用内完成 load → 定位 → 就地改字段 → 写回。
+    ///
+    /// 调用方通过 `state.store.lock()` 持锁调用本方法，整个 read-modify-write
+    /// 都在同一把锁内完成，避免"锁外 load、锁外耗时操作、再锁内整条覆盖"导致
+    /// 并发对同一 note 的不同字段（如总结 / 思维导图）互相覆盖丢失。
+    pub fn update_note<F>(&self, id: &str, f: F) -> Result<Note>
+    where
+        F: FnOnce(&mut Note),
+    {
+        let mut notes = self.load_notes()?;
+        let pos = notes
+            .iter()
+            .position(|n| n.id == id)
+            .ok_or_else(|| AppError::StoreError("笔记不存在".into()))?;
+        f(&mut notes[pos]);
+        let updated = notes[pos].clone();
+        self.save_notes(&notes)?;
+        Ok(updated)
+    }
+
     pub fn delete_note(&self, id: &str) -> Result<()> {
         let mut notes = self.load_notes()?;
         notes.retain(|n| n.id != id);
@@ -156,6 +184,15 @@ impl Store {
         };
         let content = serde_json::to_string_pretty(&store)
             .map_err(|e| AppError::StoreError(e.to_string()))?;
-        std::fs::write(&path, content).map_err(|e| AppError::StoreError(e.to_string()))
+        atomic_write(&path, &content)
     }
+}
+
+/// 原子写：先写临时文件再 rename 覆盖目标，避免写到一半进程崩溃导致目标文件被截断。
+/// 在 Windows 上 `std::fs::rename` 使用 MoveFileEx + REPLACE_EXISTING，可原子替换已存在文件。
+/// 所有调用方都持有 `Mutex<Store>`，因此同一文件的临时名不会并发竞争。
+fn atomic_write(path: &PathBuf, content: &str) -> Result<()> {
+    let tmp = path.with_extension("tmp");
+    std::fs::write(&tmp, content).map_err(|e| AppError::StoreError(e.to_string()))?;
+    std::fs::rename(&tmp, path).map_err(|e| AppError::StoreError(e.to_string()))
 }

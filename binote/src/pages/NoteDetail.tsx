@@ -73,6 +73,9 @@ export default function NoteDetail() {
 
   const summaryPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const mindmapPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  // 当前进行中的总结 / 思维导图任务 id，用于按 task_id 过滤进度事件，避免并发串台
+  const summaryTaskIdRef = useRef<string | null>(null);
+  const mindmapTaskIdRef = useRef<string | null>(null);
   const isMountedRef = useRef(true);
   const transcriptReasonRef = useRef<HTMLDivElement>(null);
 
@@ -107,12 +110,13 @@ export default function NoteDetail() {
     }
 
     let cleanup: (() => void) | undefined;
-    api.onProgress((msg) => {
+    api.onProgress((taskId, message, kind) => {
       if (!isMountedRef.current) return;
-      if (msg.includes("总结")) {
-        setSummaryProgress(msg);
-      } else if (msg.includes("思维导图")) {
-        setMindmapProgress(msg);
+      // 只接收属于本页当前任务的进度，忽略其它笔记的并发任务事件
+      if (kind === "summarize" && taskId === summaryTaskIdRef.current) {
+        setSummaryProgress(message);
+      } else if (kind === "mindmap" && taskId === mindmapTaskIdRef.current) {
+        setMindmapProgress(message);
       }
     }).then((fn) => {
       cleanup = fn;
@@ -157,6 +161,7 @@ export default function NoteDetail() {
       const setLoading = type === "summary" ? setSummaryLoading : setMindmapLoading;
       const setProgress = type === "summary" ? setSummaryProgress : setMindmapProgress;
       const pollRef = type === "summary" ? summaryPollRef : mindmapPollRef;
+      const taskIdRef = type === "summary" ? summaryTaskIdRef : mindmapTaskIdRef;
 
       setLoading(true);
       setActiveTab(type);
@@ -164,6 +169,7 @@ export default function NoteDetail() {
 
       try {
         const taskId = await config.startApi(id);
+        taskIdRef.current = taskId;
         clearPoll(type);
 
         pollRef.current = setInterval(async () => {
@@ -180,6 +186,7 @@ export default function NoteDetail() {
 
             if (taskInfo.status === "completed") {
               clearPoll(type);
+              taskIdRef.current = null;
               if (taskInfo.note_id) {
                 const updated = await api.getNote(taskInfo.note_id);
                 if (updated && isMountedRef.current) {
@@ -191,6 +198,7 @@ export default function NoteDetail() {
               }
             } else if (taskInfo.status === "failed" || taskInfo.status === "cancelled") {
               clearPoll(type);
+              taskIdRef.current = null;
               if (isMountedRef.current) {
                 setError(taskInfo.error || config.defaultError);
                 setLoading(false);
@@ -198,6 +206,7 @@ export default function NoteDetail() {
             }
           } catch (e) {
             clearPoll(type);
+            taskIdRef.current = null;
             if (isMountedRef.current) {
               setError(formatError(e));
               setLoading(false);

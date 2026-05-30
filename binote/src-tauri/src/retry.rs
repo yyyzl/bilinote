@@ -107,14 +107,22 @@ where
     Err(last_error.unwrap())
 }
 
-/// 计算延迟时间（带随机抖动）
+/// 计算延迟时间（指数退避 + equal-jitter）
 fn calculate_delay(config: &RetryConfig, retry_count: u32) -> u64 {
     let base_delay =
         config.initial_delay_ms as f64 * config.backoff_factor.powi(retry_count as i32);
-    let capped_delay = base_delay.min(config.max_delay_ms as f64);
+    let capped_delay = base_delay.min(config.max_delay_ms as f64) as u64;
 
-    // 添加 0-100ms 的随机抖动
-    let jitter = rand::thread_rng().gen_range(0..100);
+    // equal-jitter：在 [capped/2, capped] 区间内随机。
+    // 旧实现固定 0-100ms 抖动太小，多个并发任务同时撞 429 时会以几乎一致的节奏
+    // （0.5/1/2s）同步重试，形成重试风暴反而加重限流。equal-jitter 既保留退避下限，
+    // 又把并发重试的时间点打散开。
+    let half = capped_delay / 2;
+    let jitter = if half == 0 {
+        0
+    } else {
+        rand::thread_rng().gen_range(0..=half)
+    };
 
-    capped_delay as u64 + jitter
+    half + jitter
 }

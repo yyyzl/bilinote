@@ -12,8 +12,10 @@ use crate::{
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::PathBuf;
-use std::sync::Mutex;
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::{Arc, Mutex};
 use tauri::{AppHandle, Emitter, Manager, State};
+use tokio::sync::Semaphore;
 use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
 
@@ -24,6 +26,12 @@ pub struct AppState {
     pub task_handles: Mutex<HashMap<String, (JoinHandle<()>, CancellationToken)>>,
     /// 全局取消令牌（应用退出时使用）
     pub global_cancel: CancellationToken,
+    /// 转录任务并发闸：限制同时进行的转录任务数（容量来自 config，重启生效）
+    pub transcribe_gate: Arc<Semaphore>,
+    /// LLM 任务并发闸：限制同时进行的总结/思维导图独立任务数
+    pub llm_gate: Arc<Semaphore>,
+    /// 活跃任务计数（含排队中），用于维护 .task_running 标志的引用计数
+    pub active_tasks: Arc<AtomicUsize>,
 }
 
 #[derive(Clone, Serialize, Deserialize)]
@@ -32,6 +40,52 @@ pub struct TaskInfo {
     pub progress: String,
     pub note_id: Option<String>,
     pub error: Option<String>,
+}
+
+/// 进度事件 payload：携带 task_id，使并发任务的进度能在前端按任务分流，互不串台。
+#[derive(Clone, Serialize)]
+pub struct ProgressPayload {
+    pub task_id: String,
+    pub message: String,
+}
+
+/// 发送带 task_id 的进度事件。
+fn emit_progress(app: &AppHandle, event: &str, task_id: &str, message: impl Into<String>) {
+    let _ = app.emit(
+        event,
+        ProgressPayload {
+            task_id: task_id.to_string(),
+            message: message.into(),
+        },
+    );
+}
+
+/// 活跃任务计数 RAII guard。
+///
+/// 构造时计数 +1（0→1 时写 `.task_running` 标志文件，通知 Android 前台服务保活）；
+/// Drop 时计数 -1（1→0 时删除标志文件）。用 guard 覆盖排队 / 运行 / 取消 / 失败 / 完成
+/// 所有退出路径（包括 select! 取消分支的提前 return），避免手工成对调用导致漏减或双减，
+/// 也修正了旧布尔标志在并发下"先完成的任务误删全局标志"的问题。
+struct TaskFlagGuard {
+    app: AppHandle,
+    counter: Arc<AtomicUsize>,
+}
+
+impl TaskFlagGuard {
+    fn new(app: AppHandle, counter: Arc<AtomicUsize>) -> Self {
+        if counter.fetch_add(1, Ordering::SeqCst) == 0 {
+            set_task_flag_file(&app, true);
+        }
+        Self { app, counter }
+    }
+}
+
+impl Drop for TaskFlagGuard {
+    fn drop(&mut self) {
+        if self.counter.fetch_sub(1, Ordering::SeqCst) == 1 {
+            set_task_flag_file(&self.app, false);
+        }
+    }
 }
 
 #[derive(Clone)]
@@ -63,12 +117,16 @@ async fn transcribe_page_asr(
     cid: u64,
     app: &AppHandle,
     page_label: &str,
+    task_id: &str,
 ) -> Result<String> {
-    let _ = app.emit(
+    emit_progress(
+        app,
         "transcribe:progress",
+        task_id,
         format!("{}正在下载音频...", page_label),
     );
     let app_clone = app.clone();
+    let task_id_clone = task_id.to_string();
     let page_label_clone = page_label.to_string();
     let audio_data = bili
         .download_audio_with_retry(
@@ -85,17 +143,20 @@ async fn transcribe_page_asr(
                         page_label_clone, ctx.attempt, ctx.max_attempts
                     ),
                 };
-                let _ = app_clone.emit("transcribe:progress", msg);
+                emit_progress(&app_clone, "transcribe:progress", &task_id_clone, msg);
             }),
         )
         .await?;
 
     let provider_name = asr.provider_name();
-    let _ = app.emit(
+    emit_progress(
+        app,
         "transcribe:progress",
+        task_id,
         format!("{}正在使用 {} 转录...", page_label, provider_name),
     );
     let app_clone = app.clone();
+    let task_id_clone = task_id.to_string();
     let page_label_clone = page_label.to_string();
     let provider_name_clone = provider_name.to_string();
     let transcript = asr
@@ -112,7 +173,7 @@ async fn transcribe_page_asr(
                         page_label_clone, provider_name_clone, ctx.attempt, ctx.max_attempts
                     ),
                 };
-                let _ = app_clone.emit("transcribe:progress", msg);
+                emit_progress(&app_clone, "transcribe:progress", &task_id_clone, msg);
             }),
         )
         .await
@@ -166,6 +227,7 @@ async fn perform_transcription(
     config: &AppConfig,
     store: &Mutex<Store>,
     app: &AppHandle,
+    task_id: &str,
 ) -> Result<Note> {
     // 根据选择的 ASR 提供商获取对应的 API Key（字幕失败时 fallback 需要）
     let asr_key = match config.asr_provider {
@@ -190,8 +252,9 @@ async fn perform_transcription(
     let bili = BilibiliClient::new();
 
     // === 获取视频信息（带重试）===
-    let _ = app.emit("transcribe:progress", "正在获取视频信息...");
+    emit_progress(app, "transcribe:progress", task_id, "正在获取视频信息...");
     let app_clone = app.clone();
+    let task_id_clone = task_id.to_string();
     let info = bili
         .get_video_info_with_retry(
             bvid,
@@ -206,13 +269,13 @@ async fn perform_transcription(
                         ctx.attempt, ctx.max_attempts
                     ),
                 };
-                let _ = app_clone.emit("transcribe:progress", msg);
+                emit_progress(&app_clone, "transcribe:progress", &task_id_clone, msg);
             }),
         )
         .await?;
 
     // === 获取分P列表 ===
-    let _ = app.emit("transcribe:progress", "正在获取分P列表...");
+    emit_progress(app, "transcribe:progress", task_id, "正在获取分P列表...");
     let pages = bili.get_page_list(bvid).await?;
     let is_multi_page = pages.len() > 1;
     let total_pages = pages.len();
@@ -236,8 +299,10 @@ async fn perform_transcription(
             String::new()
         };
 
-        let _ = app.emit(
+        emit_progress(
+            app,
             "transcribe:progress",
+            task_id,
             format!(
                 "{}正在处理...",
                 if is_multi_page {
@@ -261,8 +326,10 @@ async fn perform_transcription(
 
         if subtitle_access.use_subtitle {
             if let Some(sd) = sessdata {
-                let _ = app.emit(
+                emit_progress(
+                    app,
                     "transcribe:progress",
+                    task_id,
                     format!("{}正在获取字幕...", page_label),
                 );
                 match bili.get_subtitle_text(bvid, info.aid, page.cid, sd).await {
@@ -272,12 +339,18 @@ async fn perform_transcription(
                             page_texts.push(text);
                             subtitle_count += 1;
                             got_subtitle = true;
-                            let _ = app
-                                .emit("transcribe:progress", format!("{}字幕获取成功", page_label));
+                            emit_progress(
+                                app,
+                                "transcribe:progress",
+                                task_id,
+                                format!("{}字幕获取成功", page_label),
+                            );
                         } else {
                             let char_count = text.chars().count();
-                            let _ = app.emit(
+                            emit_progress(
+                                app,
                                 "transcribe:progress",
+                                task_id,
                                 format!(
                                     "{}字幕内容过短（{}字/{}秒），切换到 ASR...",
                                     page_label, char_count, page.duration
@@ -294,8 +367,10 @@ async fn perform_transcription(
                         }
                     }
                     Err(e) => {
-                        let _ = app.emit(
+                        emit_progress(
+                            app,
                             "transcribe:progress",
+                            task_id,
                             format!("{}字幕获取失败（{}），切换到 ASR...", page_label, e),
                         );
                         let err_msg = e.to_string();
@@ -324,7 +399,8 @@ async fn perform_transcription(
                 asr_reasons.push(reason);
             }
             let transcript =
-                transcribe_page_asr(&bili, &asr, info.aid, page.cid, app, &page_label).await?;
+                transcribe_page_asr(&bili, &asr, info.aid, page.cid, app, &page_label, task_id)
+                    .await?;
             page_texts.push(transcript);
             asr_count += 1;
         }
@@ -354,7 +430,7 @@ async fn perform_transcription(
     };
     let transcript_reason = build_transcript_reason(transcript_source.as_deref(), &asr_reasons);
 
-    let _ = app.emit("transcribe:progress", "转写完成，正在保存...");
+    emit_progress(app, "transcribe:progress", task_id, "转写完成，正在保存...");
 
     let note = Note {
         id: uuid::Uuid::new_v4().to_string(),
@@ -379,8 +455,8 @@ fn get_task_flag_path(app: &AppHandle) -> Option<PathBuf> {
     app.path().data_dir().ok().map(|p| p.join(".task_running"))
 }
 
-/// 创建任务运行标志文件
-fn set_task_running(app: &AppHandle, running: bool) {
+/// 写入 / 删除任务运行标志文件（仅由 `TaskFlagGuard` 与应用退出清理调用）。
+fn set_task_flag_file(app: &AppHandle, running: bool) {
     if let Some(flag_path) = get_task_flag_path(app) {
         if running {
             // 创建标志文件
@@ -433,7 +509,8 @@ pub async fn get_video_info(bvid: String) -> Result<VideoInfo> {
 #[tauri::command]
 pub async fn transcribe(state: State<'_, AppState>, bvid: String, app: AppHandle) -> Result<Note> {
     let config = state.store.lock().unwrap().load_config()?;
-    perform_transcription(&bvid, &config, &state.store, &app).await
+    let task_id = uuid::Uuid::new_v4().to_string();
+    perform_transcription(&bvid, &config, &state.store, &app, &task_id).await
 }
 
 #[tauri::command]
@@ -452,7 +529,7 @@ pub async fn summarize(
         .unwrap_or("https://api.openai.com/v1".into());
     let model = config.llm_model.unwrap_or("gpt-4o-mini".into());
 
-    let mut note = state
+    let note = state
         .store
         .lock()
         .unwrap()
@@ -485,8 +562,11 @@ pub async fn summarize(
         )
         .await?;
 
-    note.summary = Some(summary);
-    state.store.lock().unwrap().save_note(note.clone())?;
+    let note = state
+        .store
+        .lock()
+        .unwrap()
+        .update_note(&note_id, |n| n.summary = Some(summary))?;
 
     Ok(note)
 }
@@ -502,28 +582,58 @@ pub async fn start_transcribe(
     // 创建任务专属的取消令牌，链接到全局取消令牌
     let cancel_token = state.global_cancel.child_token();
 
+    // 初始为"排队中"：拿到并发许可后才转为 running（见 spawn 内逻辑）
     state.tasks.lock().unwrap().insert(
         task_id.clone(),
         TaskInfo {
-            status: "running".into(),
-            progress: "正在准备...".into(),
+            status: "queued".into(),
+            progress: "排队中…".into(),
             note_id: None,
             error: None,
         },
     );
 
-    // 设置任务运行标志，通知 Android 侧
-    set_task_running(&app, true);
-
     let task_id_clone = task_id.clone();
     let app_clone = app.clone();
     let cancel_token_clone = cancel_token.clone();
+    let gate = state.transcribe_gate.clone();
+    let active_tasks = state.active_tasks.clone();
     let handle = tokio::spawn(async move {
-        // 使用 tokio::select! 监听取消信号
+        // 活跃任务计数 guard：从排队到结束全程持有，任何退出路径都会自动递减
+        let _flag = TaskFlagGuard::new(app_clone.clone(), active_tasks);
+
+        // 阶段一：获取并发许可（排队期间可被取消，取消时不会泄漏许可）
+        let _permit = tokio::select! {
+            _ = cancel_token_clone.cancelled() => {
+                let state = app_clone.state::<AppState>();
+                state.tasks.lock().unwrap().insert(task_id_clone.clone(), TaskInfo {
+                    status: "cancelled".into(),
+                    progress: "已取消".into(),
+                    note_id: None,
+                    error: Some("任务已被取消".into()),
+                });
+                state.task_handles.lock().unwrap().remove(&task_id_clone);
+                return;
+            }
+            permit = gate.acquire_owned() => match permit {
+                Ok(p) => p,
+                Err(_) => return, // 信号量被关闭（正常情况下不会发生）
+            }
+        };
+
+        // 拿到许可，转为运行态
+        {
+            let state = app_clone.state::<AppState>();
+            let mut tasks = state.tasks.lock().unwrap();
+            if let Some(info) = tasks.get_mut(&task_id_clone) {
+                info.status = "running".into();
+                info.progress = "正在准备...".into();
+            }
+        }
+
+        // 阶段二：执行转录（同样监听取消信号）
         let result = tokio::select! {
             _ = cancel_token_clone.cancelled() => {
-                // 任务被取消
-                set_task_running(&app_clone, false);
                 let state = app_clone.state::<AppState>();
                 state.tasks.lock().unwrap().insert(task_id_clone.clone(), TaskInfo {
                     status: "cancelled".into(),
@@ -537,9 +647,6 @@ pub async fn start_transcribe(
             }
             result = transcribe_background(bvid, task_id_clone.clone(), app_clone.clone(), cancel_token_clone.clone()) => result
         };
-
-        // 任务完成，清除运行标志
-        set_task_running(&app_clone, false);
 
         let state = app_clone.state::<AppState>();
         let mut tasks = state.tasks.lock().unwrap();
@@ -658,7 +765,7 @@ async fn transcribe_background(
     }
 
     // 调用共用转录逻辑
-    let note = perform_transcription(&bvid, &config, &state.store, &app).await?;
+    let note = perform_transcription(&bvid, &config, &state.store, &app, &task_id).await?;
 
     // 检查取消状态
     if cancel_token.is_cancelled() {
@@ -703,7 +810,7 @@ async fn transcribe_background(
         (false, true) => "正在生成思维导图...",
         (false, false) => unreachable!("已在上方提前返回"),
     };
-    let _ = app.emit("transcribe:progress", progress_label);
+    emit_progress(&app, "transcribe:progress", &task_id, progress_label);
 
     // 创建 LLM 客户端（内部 reqwest::Client 是 Arc，clone 廉价）
     let llm = LlmClient::new(llm_key, base_url, model);
@@ -810,15 +917,12 @@ async fn transcribe_background(
         Some(Err(e)) => (None, Some(format!("思维导图失败: {}", e))),
     };
 
-    // 更新笔记
-    let mut updated_note = note;
-    updated_note.summary = summary;
-    updated_note.mindmap = mindmap;
-    state
-        .store
-        .lock()
-        .unwrap()
-        .save_note(updated_note.clone())?;
+    // 字段级合并写回（只覆盖 summary / mindmap 两个字段，不整条覆盖）
+    let note_id = note.id.clone();
+    let updated_note = state.store.lock().unwrap().update_note(&note_id, |n| {
+        n.summary = summary;
+        n.mindmap = mindmap;
+    })?;
 
     // 判断是否全部成功
     if summarize_error.is_none() && mindmap_error.is_none() {
@@ -842,7 +946,7 @@ fn update_stream_progress(app: &AppHandle, task_id: &str, event: &str, label: &s
             info.progress = msg.clone();
         }
     }
-    let _ = app.emit(event, msg);
+    emit_progress(app, event, task_id, msg);
 }
 
 #[tauri::command]
@@ -859,25 +963,52 @@ pub async fn start_summarize(
     state.tasks.lock().unwrap().insert(
         task_id.clone(),
         TaskInfo {
-            status: "running".into(),
-            progress: "正在生成总结...".into(),
+            status: "queued".into(),
+            progress: "排队中…".into(),
             note_id: Some(note_id.clone()),
             error: None,
         },
     );
 
-    // 设置任务运行标志，通知 Android 侧
-    set_task_running(&app, true);
-
     let task_id_clone = task_id.clone();
     let app_clone = app.clone();
     let cancel_token_clone = cancel_token.clone();
+    let gate = state.llm_gate.clone();
+    let active_tasks = state.active_tasks.clone();
     let handle = tokio::spawn(async move {
-        // 使用 tokio::select! 监听取消信号
+        let _flag = TaskFlagGuard::new(app_clone.clone(), active_tasks);
+
+        // 阶段一：获取 LLM 并发许可（排队期间可被取消）
+        let _permit = tokio::select! {
+            _ = cancel_token_clone.cancelled() => {
+                let state = app_clone.state::<AppState>();
+                state.tasks.lock().unwrap().insert(task_id_clone.clone(), TaskInfo {
+                    status: "cancelled".into(),
+                    progress: "已取消".into(),
+                    note_id: None,
+                    error: Some("任务已被取消".into()),
+                });
+                state.task_handles.lock().unwrap().remove(&task_id_clone);
+                return;
+            }
+            permit = gate.acquire_owned() => match permit {
+                Ok(p) => p,
+                Err(_) => return,
+            }
+        };
+
+        {
+            let state = app_clone.state::<AppState>();
+            let mut tasks = state.tasks.lock().unwrap();
+            if let Some(info) = tasks.get_mut(&task_id_clone) {
+                info.status = "running".into();
+                info.progress = "正在生成总结...".into();
+            }
+        }
+
+        // 阶段二：执行总结（监听取消信号）
         let result = tokio::select! {
             _ = cancel_token_clone.cancelled() => {
-                // 任务被取消
-                set_task_running(&app_clone, false);
                 let state = app_clone.state::<AppState>();
                 state.tasks.lock().unwrap().insert(task_id_clone.clone(), TaskInfo {
                     status: "cancelled".into(),
@@ -891,9 +1022,6 @@ pub async fn start_summarize(
             }
             result = summarize_background(note_id, task_id_clone.clone(), app_clone.clone()) => result
         };
-
-        // 任务完成，清除运行标志
-        set_task_running(&app_clone, false);
 
         let state = app_clone.state::<AppState>();
         let mut tasks = state.tasks.lock().unwrap();
@@ -960,7 +1088,7 @@ async fn summarize_background(note_id: String, task_id: String, app: AppHandle) 
         .unwrap_or("https://api.openai.com/v1".into());
     let model = config.llm_model.unwrap_or("gpt-4o-mini".into());
 
-    let mut note = state
+    let note = state
         .store
         .lock()
         .unwrap()
@@ -969,10 +1097,11 @@ async fn summarize_background(note_id: String, task_id: String, app: AppHandle) 
         .find(|n| n.id == note_id)
         .ok_or(crate::error::AppError::StoreError("笔记不存在".into()))?;
 
-    let _ = app.emit("summarize:progress", "生成总结...");
+    emit_progress(&app, "summarize:progress", &task_id, "生成总结...");
 
     let llm = LlmClient::new(llm_key, base_url, model);
     let app_retry = app.clone();
+    let task_id_retry = task_id.clone();
     let app_progress = app.clone();
     let task_id_progress = task_id.clone();
     let summary = llm
@@ -990,7 +1119,7 @@ async fn summarize_background(note_id: String, task_id: String, app: AppHandle) 
                         ctx.attempt, ctx.max_attempts
                     ),
                 };
-                let _ = app_retry.emit("summarize:progress", msg);
+                emit_progress(&app_retry, "summarize:progress", &task_id_retry, msg);
             }),
             move |chars: usize| {
                 update_stream_progress(
@@ -1004,8 +1133,11 @@ async fn summarize_background(note_id: String, task_id: String, app: AppHandle) 
         )
         .await?;
 
-    note.summary = Some(summary);
-    state.store.lock().unwrap().save_note(note.clone())?;
+    let note = state
+        .store
+        .lock()
+        .unwrap()
+        .update_note(&note_id, |n| n.summary = Some(summary))?;
 
     Ok(note)
 }
@@ -1024,25 +1156,52 @@ pub async fn start_mindmap(
     state.tasks.lock().unwrap().insert(
         task_id.clone(),
         TaskInfo {
-            status: "running".into(),
-            progress: "正在生成思维导图...".into(),
+            status: "queued".into(),
+            progress: "排队中…".into(),
             note_id: Some(note_id.clone()),
             error: None,
         },
     );
 
-    // 设置任务运行标志，通知 Android 侧
-    set_task_running(&app, true);
-
     let task_id_clone = task_id.clone();
     let app_clone = app.clone();
     let cancel_token_clone = cancel_token.clone();
+    let gate = state.llm_gate.clone();
+    let active_tasks = state.active_tasks.clone();
     let handle = tokio::spawn(async move {
-        // 使用 tokio::select! 监听取消信号
+        let _flag = TaskFlagGuard::new(app_clone.clone(), active_tasks);
+
+        // 阶段一：获取 LLM 并发许可（排队期间可被取消）
+        let _permit = tokio::select! {
+            _ = cancel_token_clone.cancelled() => {
+                let state = app_clone.state::<AppState>();
+                state.tasks.lock().unwrap().insert(task_id_clone.clone(), TaskInfo {
+                    status: "cancelled".into(),
+                    progress: "已取消".into(),
+                    note_id: None,
+                    error: Some("任务已被取消".into()),
+                });
+                state.task_handles.lock().unwrap().remove(&task_id_clone);
+                return;
+            }
+            permit = gate.acquire_owned() => match permit {
+                Ok(p) => p,
+                Err(_) => return,
+            }
+        };
+
+        {
+            let state = app_clone.state::<AppState>();
+            let mut tasks = state.tasks.lock().unwrap();
+            if let Some(info) = tasks.get_mut(&task_id_clone) {
+                info.status = "running".into();
+                info.progress = "正在生成思维导图...".into();
+            }
+        }
+
+        // 阶段二：执行思维导图生成（监听取消信号）
         let result = tokio::select! {
             _ = cancel_token_clone.cancelled() => {
-                // 任务被取消
-                set_task_running(&app_clone, false);
                 let state = app_clone.state::<AppState>();
                 state.tasks.lock().unwrap().insert(task_id_clone.clone(), TaskInfo {
                     status: "cancelled".into(),
@@ -1056,9 +1215,6 @@ pub async fn start_mindmap(
             }
             result = mindmap_background(note_id, task_id_clone.clone(), app_clone.clone()) => result
         };
-
-        // 任务完成，清除运行标志
-        set_task_running(&app_clone, false);
 
         let state = app_clone.state::<AppState>();
         let mut tasks = state.tasks.lock().unwrap();
@@ -1125,7 +1281,7 @@ async fn mindmap_background(note_id: String, task_id: String, app: AppHandle) ->
         .unwrap_or("https://api.openai.com/v1".into());
     let model = config.llm_model.unwrap_or("gpt-4o-mini".into());
 
-    let mut note = state
+    let note = state
         .store
         .lock()
         .unwrap()
@@ -1134,10 +1290,11 @@ async fn mindmap_background(note_id: String, task_id: String, app: AppHandle) ->
         .find(|n| n.id == note_id)
         .ok_or(crate::error::AppError::StoreError("笔记不存在".into()))?;
 
-    let _ = app.emit("mindmap:progress", "生成思维导图...");
+    emit_progress(&app, "mindmap:progress", &task_id, "生成思维导图...");
 
     let llm = LlmClient::new(llm_key, base_url, model);
     let app_retry = app.clone();
+    let task_id_retry = task_id.clone();
     let app_progress = app.clone();
     let task_id_progress = task_id.clone();
     let mindmap = llm
@@ -1155,7 +1312,7 @@ async fn mindmap_background(note_id: String, task_id: String, app: AppHandle) ->
                         ctx.attempt, ctx.max_attempts
                     ),
                 };
-                let _ = app_retry.emit("mindmap:progress", msg);
+                emit_progress(&app_retry, "mindmap:progress", &task_id_retry, msg);
             }),
             move |chars: usize| {
                 update_stream_progress(
@@ -1169,8 +1326,11 @@ async fn mindmap_background(note_id: String, task_id: String, app: AppHandle) ->
         )
         .await?;
 
-    note.mindmap = Some(mindmap);
-    state.store.lock().unwrap().save_note(note.clone())?;
+    let note = state
+        .store
+        .lock()
+        .unwrap()
+        .update_note(&note_id, |n| n.mindmap = Some(mindmap))?;
 
     Ok(note)
 }
@@ -1244,7 +1404,7 @@ pub async fn cancel_task(state: State<'_, AppState>, task_id: String) -> Result<
 }
 
 /// 取消所有正在运行的任务（用于应用退出时）
-pub fn cancel_all_tasks(state: &AppState) {
+pub fn cancel_all_tasks(app: &AppHandle, state: &AppState) {
     // 触发全局取消令牌
     state.global_cancel.cancel();
 
@@ -1256,6 +1416,11 @@ pub fn cancel_all_tasks(state: &AppState) {
 
     // 清理任务状态
     state.tasks.lock().unwrap().clear();
+
+    // 退出时强制把活跃任务计数清零并删除 .task_running 标志，
+    // 避免 abort 的任务来不及 drop guard 而残留标志文件，下次启动误判。
+    state.active_tasks.store(0, Ordering::SeqCst);
+    set_task_flag_file(app, false);
 }
 
 // ============================

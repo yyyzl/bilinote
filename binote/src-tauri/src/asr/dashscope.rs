@@ -17,10 +17,14 @@ pub struct DashScopeClient {
 
 impl DashScopeClient {
     pub fn new(api_key: String) -> Self {
-        Self {
-            client: Client::new(),
-            api_key,
-        }
+        // 显式设置超时，避免并发下某个请求被服务端挂起而永久占用并发许可。
+        // 时长与 SenseVoice 对齐（qwen3-asr-flash 单次音频上限约 5 分钟）。
+        let client = Client::builder()
+            .connect_timeout(std::time::Duration::from_secs(10))
+            .timeout(std::time::Duration::from_secs(300))
+            .build()
+            .unwrap_or_else(|_| Client::new());
+        Self { client, api_key }
     }
 
     pub async fn transcribe(&self, audio_data: &[u8]) -> Result<String> {

@@ -6,10 +6,10 @@
  */
 
 /**
- * 分享 URL 缓冲区
- * 在 React 加载完成前暂存从 Android 接收的 URL
+ * 分享 URL 缓冲队列
+ * 在 React 加载完成前暂存从 Android 接收的 URL（支持连续多条，不互相覆盖）
  */
-let pendingShareUrl: string | null = null;
+let pendingShareUrls: string[] = [];
 
 /**
  * React 回调函数
@@ -34,7 +34,10 @@ export function receiveShareFromAndroid(url: string): boolean {
     shareHandler(url);
     return true;
   } else {
-    pendingShareUrl = url;
+    // 入队缓冲（去重），等 React 就绪后一次性回放
+    if (!pendingShareUrls.includes(url)) {
+      pendingShareUrls.push(url);
+    }
     return false;
   }
 }
@@ -49,11 +52,13 @@ export function registerShareHandler(handler: (url: string) => void): void {
   shareHandler = handler;
   isReactReady = true;
 
-  // 处理缓冲的 URL
-  if (pendingShareUrl) {
-    const url = pendingShareUrl;
-    pendingShareUrl = null;
-    handler(url);
+  // 回放所有缓冲的 URL
+  if (pendingShareUrls.length > 0) {
+    const urls = pendingShareUrls;
+    pendingShareUrls = [];
+    for (const url of urls) {
+      handler(url);
+    }
   }
 }
 
@@ -70,16 +75,16 @@ export function unregisterShareHandler(): void {
  * 检查是否有待处理的分享 URL
  */
 export function hasPendingShare(): boolean {
-  return pendingShareUrl !== null;
+  return pendingShareUrls.length > 0;
 }
 
 /**
- * 获取并清除待处理的分享 URL
+ * 获取并清除所有待处理的分享 URL
  */
-export function consumePendingShare(): string | null {
-  const url = pendingShareUrl;
-  pendingShareUrl = null;
-  return url;
+export function consumePendingShares(): string[] {
+  const urls = pendingShareUrls;
+  pendingShareUrls = [];
+  return urls;
 }
 
 /**
