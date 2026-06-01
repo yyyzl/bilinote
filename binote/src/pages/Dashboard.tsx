@@ -49,6 +49,10 @@ function buildExcerpt(note: api.Note): string {
   return source.replace(/\s+/g, " ").trim().slice(0, 120);
 }
 
+function getNoteSourceUrl(note: api.Note): string {
+  return note.source_url?.trim() || `https://www.bilibili.com/video/${note.bvid}`;
+}
+
 export default function Dashboard() {
   const [input, setInput] = useState("");
   const [notes, setNotes] = useState<api.Note[]>([]);
@@ -73,6 +77,9 @@ export default function Dashboard() {
   // 镜像最新 tasks，供轮询闭包读取（避免闭包捕获旧值）
   const tasksRef = useRef<ActiveTask[]>([]);
   tasksRef.current = tasks;
+  // 同步登记"正在提交中"的 bvid，覆盖"去重检查 → 入队"之间的异步窗口（TOCTOU），
+  // 防止分享队列一次性并发回放多条相同链接造成重复入队。
+  const inFlightBvidsRef = useRef<Set<string>>(new Set());
 
   const loadNotes = useCallback(async () => {
     try {
@@ -175,32 +182,37 @@ export default function Dashboard() {
       if (!trimmed) return;
 
       setError("");
+      let bvid: string | undefined;
       try {
-        const bvid = await api.parseLink(trimmed);
+        const resolved = await api.parseLink(trimmed);
+        bvid = resolved;
 
-        // 去重：同一视频若已在队列中（未结束），不重复入队
+        // 去重：同一视频若已在队列中（未结束）或正在提交中，不重复入队。
+        // inFlightBvidsRef 覆盖"检查 → 入队"之间的异步窗口，防止并发回放重复提交。
         const existing = tasksRef.current.find(
-          (t) => t.bvid === bvid && (t.status === "queued" || t.status === "running")
+          (t) => t.bvid === resolved && (t.status === "queued" || t.status === "running")
         );
-        if (existing) {
-          setHint(`「${existing.title}」已在处理队列中`);
+        if (existing || inFlightBvidsRef.current.has(resolved)) {
+          setHint(`「${existing?.title ?? resolved}」已在处理队列中`);
           if (hintTimeoutRef.current) clearTimeout(hintTimeoutRef.current);
           hintTimeoutRef.current = setTimeout(() => {
             if (isMountedRef.current) setHint("");
           }, 2500);
           return;
         }
+        // 同步占位（紧跟检查、无 await），抢占该 bvid 的提交权
+        inFlightBvidsRef.current.add(resolved);
 
-        const taskId = await api.startTranscribe(bvid);
+        const taskId = await api.startTranscribe(resolved, trimmed);
         if (!isMountedRef.current) return;
 
         setTasks((prev) => [
           ...prev,
           {
             taskId,
-            bvid,
+            bvid: resolved,
             url: trimmed,
-            title: bvid,
+            title: resolved,
             progress: "正在准备…",
             status: "queued",
             error: null,
@@ -210,7 +222,7 @@ export default function Dashboard() {
 
         // 异步补全视频标题（失败则保留 bvid 占位，不影响转录）
         void api
-          .getVideoInfo(bvid)
+          .getVideoInfo(resolved)
           .then((info) => {
             if (isMountedRef.current && info?.title) {
               patchTask(taskId, { title: info.title });
@@ -221,6 +233,9 @@ export default function Dashboard() {
         if (isMountedRef.current) {
           setError(formatError(e));
         }
+      } finally {
+        // 入队成功后去重交回 tasksRef；失败/取消/卸载也要释放占位
+        if (bvid) inFlightBvidsRef.current.delete(bvid);
       }
     },
     [ensurePolling, patchTask]
@@ -232,6 +247,7 @@ export default function Dashboard() {
     loadNotes();
 
     let cleanup: (() => void) | undefined;
+    let listenerCancelled = false;
     api
       .onProgress((taskId, message) => {
         if (!isMountedRef.current) return;
@@ -244,11 +260,14 @@ export default function Dashboard() {
         );
       })
       .then((fn) => {
-        cleanup = fn;
+        // 若注册兑现前组件已卸载，立即注销，避免监听器泄漏
+        if (listenerCancelled) fn();
+        else cleanup = fn;
       });
 
     return () => {
       isMountedRef.current = false;
+      listenerCancelled = true;
       cleanup?.();
       if (pollIntervalRef.current) {
         clearInterval(pollIntervalRef.current);
@@ -628,6 +647,9 @@ export default function Dashboard() {
                                 ? task.error || "失败"
                                 : task.progress}
                           </p>
+                          <p className="truncate text-[11px] leading-5 text-ink-300">
+                            源链接：{task.url}
+                          </p>
                         </div>
 
                         {(task.status === "queued" || task.status === "running") && (
@@ -665,6 +687,10 @@ export default function Dashboard() {
                     <h3 className="font-display text-2xl font-semibold leading-tight text-ink-900">
                       {latestNote.title}
                     </h3>
+                    <p className="flex items-center gap-2 truncate text-xs text-ink-400">
+                      <LinkIcon size={13} />
+                      <span className="truncate">{getNoteSourceUrl(latestNote)}</span>
+                    </p>
                     <p className="text-sm leading-7 text-ink-500">{buildExcerpt(latestNote)}...</p>
                   </div>
                 </Link>
@@ -763,7 +789,7 @@ export default function Dashboard() {
               <p className="editorial-kicker">Note Library</p>
               <h2 className="section-display mt-2">我的笔记库</h2>
               <p className="mt-2 max-w-2xl text-sm leading-7 text-ink-500">
-                每条记录都保留原始转录、AI 总结和思维导图，方便回看、复盘和继续整理。
+                每条记录都保留原始链接、原始转录、AI 总结和思维导图，方便回看、复盘和继续整理。
               </p>
             </div>
             <div className="flex flex-wrap items-center gap-2">
@@ -796,6 +822,7 @@ export default function Dashboard() {
                 const isSelected = selectedIds.has(note.id);
                 const summaryReady = Boolean(note.summary);
                 const mindmapReady = Boolean(note.mindmap);
+                const noteSourceUrl = getNoteSourceUrl(note);
 
                 return (
                   <Link
@@ -870,6 +897,10 @@ export default function Dashboard() {
                         <p className="text-sm leading-7 text-ink-500">
                           {buildExcerpt(note)}
                           ...
+                        </p>
+                        <p className="flex items-center gap-2 truncate text-xs text-ink-400">
+                          <LinkIcon size={13} />
+                          <span className="truncate">{noteSourceUrl}</span>
                         </p>
                       </div>
 

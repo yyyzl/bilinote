@@ -72,22 +72,6 @@ export function unregisterShareHandler(): void {
 }
 
 /**
- * 检查是否有待处理的分享 URL
- */
-export function hasPendingShare(): boolean {
-  return pendingShareUrls.length > 0;
-}
-
-/**
- * 获取并清除所有待处理的分享 URL
- */
-export function consumePendingShares(): string[] {
-  const urls = pendingShareUrls;
-  pendingShareUrls = [];
-  return urls;
-}
-
-/**
  * 检查 React 是否已准备好
  * 供 Android 端 JS 调用检测
  */

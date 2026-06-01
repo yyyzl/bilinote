@@ -77,6 +77,9 @@ impl Default for AppConfig {
 pub struct Note {
     pub id: String,
     pub bvid: String,
+    /// 用户提交的原始视频链接或输入，旧数据为 None
+    #[serde(default)]
+    pub source_url: Option<String>,
     pub title: String,
     pub cover: String,
     pub transcript: String,
@@ -188,11 +191,25 @@ impl Store {
     }
 }
 
-/// 原子写：先写临时文件再 rename 覆盖目标，避免写到一半进程崩溃导致目标文件被截断。
+/// 原子写：先写临时文件、fsync 落盘，再 rename 覆盖目标，
+/// 避免写到一半进程崩溃导致目标文件被截断或残留半截数据。
 /// 在 Windows 上 `std::fs::rename` 使用 MoveFileEx + REPLACE_EXISTING，可原子替换已存在文件。
 /// 所有调用方都持有 `Mutex<Store>`，因此同一文件的临时名不会并发竞争。
 fn atomic_write(path: &PathBuf, content: &str) -> Result<()> {
+    use std::io::Write;
     let tmp = path.with_extension("tmp");
-    std::fs::write(&tmp, content).map_err(|e| AppError::StoreError(e.to_string()))?;
-    std::fs::rename(&tmp, path).map_err(|e| AppError::StoreError(e.to_string()))
+    // 写临时文件并 fsync，确保数据真正落盘后再 rename（提升崩溃一致性）。
+    {
+        let mut f = std::fs::File::create(&tmp).map_err(|e| AppError::StoreError(e.to_string()))?;
+        f.write_all(content.as_bytes())
+            .map_err(|e| AppError::StoreError(e.to_string()))?;
+        f.sync_all()
+            .map_err(|e| AppError::StoreError(e.to_string()))?;
+    }
+    // rename 失败时尽量清理临时文件，避免残留垃圾。
+    if let Err(e) = std::fs::rename(&tmp, path) {
+        let _ = std::fs::remove_file(&tmp);
+        return Err(AppError::StoreError(e.to_string()));
+    }
+    Ok(())
 }

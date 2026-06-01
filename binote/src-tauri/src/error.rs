@@ -49,10 +49,28 @@ impl Retryable for AppError {
 fn is_retryable_api_error(msg: &str) -> bool {
     let msg_lower = msg.to_lowercase();
 
-    // 1) 限流信号最优先判为可重试：即使文案里同时出现 "quota"
-    //    （"rate quota / 配额限流" 也是临时限流），也应退避重试而非直接失败。
-    //    这修正了旧逻辑里限流响应体含 "quota" 被当成永久错误的问题——
-    //    并发放大后该误判会让大量本应重试的任务直接失败。
+    // 1) 「额度/账单」类硬永久错误最优先判为不可重试：即便响应携带 HTTP 429，
+    //    也绝不能重试。OpenAI 兼容 LLM 的真实配额耗尽 (insufficient_quota) 正是
+    //    以 HTTP 429 返回（错误体形如 "HTTP 429 Too Many Requests - {...insufficient_quota...}"），
+    //    若先判 429 可重试，配额耗尽会被无谓退避重试到上限才失败、并在并发下放大浪费。
+    //    这里用更具体的短语（insufficient_quota / 余额不足 …）而非裸 "quota"/"insufficient"/"balance"，
+    //    既能拦住真实额度耗尽，又不误伤 "rate quota / 限流" 等临时场景。
+    let hard_permanent = [
+        "insufficient_quota", // OpenAI 配额耗尽（常以 HTTP 429 返回）
+        "insufficient quota",
+        "insufficient_user_quota",
+        "insufficient balance", // 余额不足（含空格变体）
+        "insufficient_balance",
+        "exceeded your current quota", // OpenAI 配额耗尽典型文案
+        "欠费",
+        "余额不足",
+    ];
+    if hard_permanent.iter().any(|k| msg_lower.contains(k)) {
+        return false;
+    }
+
+    // 2) 限流信号判为可重试：即使文案里出现 "quota"（"rate quota / 配额限流"
+    //    属临时限流），也应退避重试而非直接失败——上一步已先排除真实额度耗尽。
     let rate_limited = [
         "rate limit",        // 限流
         "ratelimit",         // 限流（无空格变体）
@@ -64,7 +82,7 @@ fn is_retryable_api_error(msg: &str) -> bool {
         return true;
     }
 
-    // 2) 明确的永久性错误关键词：认证 / 资源不存在 / 余额耗尽 / 参数非法，不重试
+    // 3) 其它明确的永久性错误关键词：认证 / 资源不存在 / 参数非法，不重试
     let non_retryable = [
         "invalid",      // 参数无效
         "unauthorized", // 未授权
@@ -72,19 +90,14 @@ fn is_retryable_api_error(msg: &str) -> bool {
         "not found",    // 资源不存在
         "401",
         "403",
-        "404",          // HTTP 状态码
-        "api key",      // API Key 问题
-        "insufficient", // 余额 / 配额耗尽
-        "balance",      // 余额不足
-        "欠费",
-        "余额不足",
-        "quota", // 真实配额耗尽（已排除上面的限流场景）
+        "404",     // HTTP 状态码
+        "api key", // API Key 问题
     ];
     if non_retryable.iter().any(|k| msg_lower.contains(k)) {
         return false;
     }
 
-    // 3) 其它临时性错误（网络 / 5xx / 超时）可重试
+    // 4) 其它临时性错误（网络 / 5xx / 超时）可重试
     let retryable = [
         "timeout",    // 超时
         "timed out",  // 超时

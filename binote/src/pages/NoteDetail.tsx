@@ -7,7 +7,9 @@ import {
   BrainCircuit,
   CalendarDays,
   CircleHelp,
+  ExternalLink,
   FileText,
+  Link as LinkIcon,
   Loader2,
   Network,
   RefreshCw,
@@ -57,6 +59,17 @@ function formatCreatedDate(timestamp: number): string {
     month: "long",
     day: "numeric",
   });
+}
+
+function getNoteSourceInput(note: api.Note): string {
+  return note.source_url?.trim() || `https://www.bilibili.com/video/${note.bvid}`;
+}
+
+function getOpenableSourceUrl(note: api.Note): string {
+  const sourceInput = getNoteSourceInput(note);
+  return /^https?:\/\//i.test(sourceInput)
+    ? sourceInput
+    : `https://www.bilibili.com/video/${note.bvid}`;
 }
 
 export default function NoteDetail() {
@@ -257,6 +270,8 @@ export default function NoteDetail() {
     : null;
   const transcriptReasonTitle =
     note.transcript_source === "mixed" ? "部分内容为什么用了 ASR" : "为什么没有走原生字幕";
+  const sourceInput = getNoteSourceInput(note);
+  const openableSourceUrl = getOpenableSourceUrl(note);
 
   return (
     <div className="app-shell">
@@ -329,6 +344,34 @@ export default function NoteDetail() {
                 <div className="space-y-4">
                   <p className="editorial-kicker">Bilibili Archive</p>
                   <h2 className="title-display max-w-3xl">{note.title}</h2>
+                  <div className="flex max-w-3xl flex-col gap-3 rounded-[24px] border border-ink-100/80 bg-paper-50/[0.72] px-4 py-3 shadow-inset sm:flex-row sm:items-center sm:justify-between">
+                    <div className="flex min-w-0 items-center gap-2 text-sm text-ink-500">
+                      <LinkIcon size={15} className="shrink-0 text-primary-600" />
+                      <span className="shrink-0 font-semibold text-ink-700">原始链接</span>
+                      <span className="truncate" title={sourceInput}>
+                        {sourceInput}
+                      </span>
+                    </div>
+                    <div className="flex shrink-0 items-center gap-2">
+                      <CopyButton
+                        text={sourceInput}
+                        label="复制链接"
+                        successLabel="已复制"
+                        className="button-secondary min-h-9 !px-3 !py-2 text-xs"
+                        size={14}
+                      />
+                      <a
+                        href={openableSourceUrl}
+                        target="_blank"
+                        rel="noreferrer"
+                        title={sourceInput}
+                        className="button-tertiary min-h-9 !px-3 !py-2 text-xs"
+                      >
+                        <ExternalLink size={14} />
+                        打开
+                      </a>
+                    </div>
+                  </div>
                 </div>
               </div>
 

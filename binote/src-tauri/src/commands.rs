@@ -224,6 +224,7 @@ fn build_transcript_reason(
 /// 获取视频信息 → 获取分P列表 → [验证SESSDATA → 尝试字幕] / ASR转录 → 合并 → 保存笔记
 async fn perform_transcription(
     bvid: &str,
+    source_url: Option<&str>,
     config: &AppConfig,
     store: &Mutex<Store>,
     app: &AppHandle,
@@ -281,7 +282,7 @@ async fn perform_transcription(
     let total_pages = pages.len();
 
     // === 判断是否可以尝试字幕（集成自动刷新）===
-    let subtitle_access = try_auto_refresh_sessdata(config, store, app).await;
+    let subtitle_access = try_auto_refresh_sessdata(config, store, app, task_id).await;
     let sessdata = subtitle_access.sessdata.as_deref();
 
     // === 逐P处理 ===
@@ -435,6 +436,10 @@ async fn perform_transcription(
     let note = Note {
         id: uuid::Uuid::new_v4().to_string(),
         bvid: info.bvid,
+        source_url: source_url
+            .map(str::trim)
+            .filter(|url| !url.is_empty())
+            .map(ToOwned::to_owned),
         title: info.title,
         cover: info.cover,
         transcript,
@@ -507,10 +512,23 @@ pub async fn get_video_info(bvid: String) -> Result<VideoInfo> {
 }
 
 #[tauri::command]
-pub async fn transcribe(state: State<'_, AppState>, bvid: String, app: AppHandle) -> Result<Note> {
+pub async fn transcribe(
+    state: State<'_, AppState>,
+    bvid: String,
+    source_url: Option<String>,
+    app: AppHandle,
+) -> Result<Note> {
     let config = state.store.lock().unwrap().load_config()?;
     let task_id = uuid::Uuid::new_v4().to_string();
-    perform_transcription(&bvid, &config, &state.store, &app, &task_id).await
+    perform_transcription(
+        &bvid,
+        source_url.as_deref(),
+        &config,
+        &state.store,
+        &app,
+        &task_id,
+    )
+    .await
 }
 
 #[tauri::command]
@@ -575,6 +593,7 @@ pub async fn summarize(
 pub async fn start_transcribe(
     state: State<'_, AppState>,
     bvid: String,
+    source_url: Option<String>,
     app: AppHandle,
 ) -> Result<String> {
     let task_id = uuid::Uuid::new_v4().to_string();
@@ -645,7 +664,7 @@ pub async fn start_transcribe(
                 state.task_handles.lock().unwrap().remove(&task_id_clone);
                 return;
             }
-            result = transcribe_background(bvid, task_id_clone.clone(), app_clone.clone(), cancel_token_clone.clone()) => result
+            result = transcribe_background(bvid, source_url, task_id_clone.clone(), app_clone.clone(), cancel_token_clone.clone(), _permit) => result
         };
 
         let state = app_clone.state::<AppState>();
@@ -752,9 +771,11 @@ pub async fn get_task_status(state: State<'_, AppState>, task_id: String) -> Res
 
 async fn transcribe_background(
     bvid: String,
+    source_url: Option<String>,
     task_id: String,
     app: AppHandle,
     cancel_token: CancellationToken,
+    permit: tokio::sync::OwnedSemaphorePermit,
 ) -> Result<TranscribeResult> {
     let state = app.state::<AppState>();
     let config = state.store.lock().unwrap().load_config()?;
@@ -765,12 +786,24 @@ async fn transcribe_background(
     }
 
     // 调用共用转录逻辑
-    let note = perform_transcription(&bvid, &config, &state.store, &app, &task_id).await?;
+    let note = perform_transcription(
+        &bvid,
+        source_url.as_deref(),
+        &config,
+        &state.store,
+        &app,
+        &task_id,
+    )
+    .await?;
 
     // 检查取消状态
     if cancel_token.is_cancelled() {
         return Err(crate::error::AppError::StoreError("任务已取消".into()));
     }
+
+    // 纯转录已完成：立即释放 transcribe_gate 许可。后续自动 LLM 阶段（总结/思维导图）
+    // 不应再占用转录并发名额，否则队列中下一个待转录任务会被 LLM 生成时间白白阻塞。
+    drop(permit);
 
     // ===== 自动生成逻辑（按用户开关跳过总结 / 思维导图）=====
     let auto_summary = config.auto_summary;
@@ -821,6 +854,7 @@ async fn transcribe_background(
     let summary_fut = {
         let llm = llm.clone();
         let app_retry = app.clone();
+        let task_id_retry = task_id.clone();
         let app_progress = app.clone();
         let task_id_progress = task_id.clone();
         let transcript = note.transcript.clone();
@@ -844,7 +878,7 @@ async fn transcribe_background(
                                 ctx.attempt, ctx.max_attempts
                             ),
                         };
-                        let _ = app_retry.emit("transcribe:progress", msg);
+                        emit_progress(&app_retry, "transcribe:progress", &task_id_retry, msg);
                     }),
                     move |chars: usize| {
                         update_stream_progress(
@@ -863,6 +897,7 @@ async fn transcribe_background(
 
     let mindmap_fut = {
         let app_retry = app.clone();
+        let task_id_retry = task_id.clone();
         let app_progress = app.clone();
         let task_id_progress = task_id.clone();
         let transcript = note.transcript.clone();
@@ -886,7 +921,7 @@ async fn transcribe_background(
                                 ctx.attempt, ctx.max_attempts
                             ),
                         };
-                        let _ = app_retry.emit("transcribe:progress", msg);
+                        emit_progress(&app_retry, "transcribe:progress", &task_id_retry, msg);
                     }),
                     move |chars: usize| {
                         update_stream_progress(
@@ -1539,6 +1574,7 @@ async fn try_auto_refresh_sessdata(
     config: &AppConfig,
     store: &Mutex<Store>,
     app: &tauri::AppHandle,
+    task_id: &str,
 ) -> SubtitleAccessDecision {
     let sessdata = match config
         .bilibili_sessdata
@@ -1558,12 +1594,14 @@ async fn try_auto_refresh_sessdata(
     };
 
     let bili = BilibiliClient::new();
-    let _ = app.emit("transcribe:progress", "正在验证登录态...");
+    emit_progress(app, "transcribe:progress", task_id, "正在验证登录态...");
 
     match bili.check_login_status(&sessdata).await {
         Ok(status) if status.is_login => {
-            let _ = app.emit(
+            emit_progress(
+                app,
                 "transcribe:progress",
+                task_id,
                 format!(
                     "登录验证成功（{}），正在检查字幕...",
                     status.uname.unwrap_or_default()
@@ -1587,7 +1625,12 @@ async fn try_auto_refresh_sessdata(
                 .filter(|s| !s.is_empty());
 
             if let (Some(jct), Some(rt)) = (bili_jct, refresh_token) {
-                let _ = app.emit("transcribe:progress", "SESSDATA 已过期，正在自动刷新...");
+                emit_progress(
+                    app,
+                    "transcribe:progress",
+                    task_id,
+                    "SESSDATA 已过期，正在自动刷新...",
+                );
                 let auth = BiliAuth::new();
                 match auth.try_refresh_cookie(&sessdata, jct, rt).await {
                     Ok(RefreshResult::Success(new_creds)) => {
@@ -1595,13 +1638,20 @@ async fn try_auto_refresh_sessdata(
                             eprintln!("[auth] 保存刷新后的凭证失败: {}", e);
                         }
 
-                        let _ = app.emit("transcribe:progress", "Cookie 刷新成功，继续处理...");
+                        emit_progress(
+                            app,
+                            "transcribe:progress",
+                            task_id,
+                            "Cookie 刷新成功，继续处理...",
+                        );
 
                         // 用新 SESSDATA 验证
                         if let Ok(new_status) = bili.check_login_status(&new_creds.sessdata).await {
                             if new_status.is_login {
-                                let _ = app.emit(
+                                emit_progress(
+                                    app,
                                     "transcribe:progress",
+                                    task_id,
                                     format!(
                                         "登录验证成功（{}），正在检查字幕...",
                                         new_status.uname.unwrap_or_default()
@@ -1616,7 +1666,12 @@ async fn try_auto_refresh_sessdata(
                         }
                     }
                     _ => {
-                        let _ = app.emit("transcribe:progress", "Cookie 刷新失败，将使用 ASR 转录");
+                        emit_progress(
+                            app,
+                            "transcribe:progress",
+                            task_id,
+                            "Cookie 刷新失败，将使用 ASR 转录",
+                        );
                         return SubtitleAccessDecision {
                             use_subtitle: false,
                             sessdata: None,
@@ -1627,8 +1682,10 @@ async fn try_auto_refresh_sessdata(
                     }
                 }
             } else {
-                let _ = app.emit(
+                emit_progress(
+                    app,
                     "transcribe:progress",
+                    task_id,
                     "SESSDATA 已过期，将使用 ASR 转录（扫码登录可获得自动刷新能力）",
                 );
                 return SubtitleAccessDecision {
@@ -1641,7 +1698,12 @@ async fn try_auto_refresh_sessdata(
             }
         }
         Err(_) => {
-            let _ = app.emit("transcribe:progress", "登录态验证失败，将使用 ASR 转录");
+            emit_progress(
+                app,
+                "transcribe:progress",
+                task_id,
+                "登录态验证失败，将使用 ASR 转录",
+            );
             return SubtitleAccessDecision {
                 use_subtitle: false,
                 sessdata: None,

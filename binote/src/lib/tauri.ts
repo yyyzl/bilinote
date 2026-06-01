@@ -13,6 +13,8 @@ export interface VideoInfo {
 export interface Note {
   id: string;
   bvid: string;
+  /** 用户提交的原始视频链接或输入，旧数据为 null */
+  source_url: string | null;
   title: string;
   cover: string;
   transcript: string;
@@ -110,10 +112,12 @@ export const deleteNote = (id: string) => invoke("delete_note", { id });
 
 export const parseLink = (input: string) => invoke<string>("parse_link", { input });
 export const getVideoInfo = (bvid: string) => invoke<VideoInfo>("get_video_info", { bvid });
-export const transcribe = (bvid: string) => invoke<Note>("transcribe", { bvid });
+export const transcribe = (bvid: string, sourceUrl?: string) =>
+  invoke<Note>("transcribe", { bvid, sourceUrl });
 export const summarize = (noteId: string) => invoke<Note>("summarize", { noteId });
 
-export const startTranscribe = (bvid: string) => invoke<string>("start_transcribe", { bvid });
+export const startTranscribe = (bvid: string, sourceUrl?: string) =>
+  invoke<string>("start_transcribe", { bvid, sourceUrl });
 export const startSummarize = (noteId: string) => invoke<string>("start_summarize", { noteId });
 export const startMindmap = (noteId: string) => invoke<string>("start_mindmap", { noteId });
 export const getTaskStatus = (taskId: string) => invoke<TaskInfo>("get_task_status", { taskId });
