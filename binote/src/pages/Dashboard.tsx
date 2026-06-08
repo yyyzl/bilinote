@@ -530,7 +530,7 @@ export default function Dashboard() {
       <main className={`page-shell ${selectionMode ? "mt-[calc(var(--navbar-total-height)+5.5rem)]" : "mt-header-offset"} pt-6 sm:pt-8`}>
         <section className="hero-panel ghost-overlay">
           <div className="surface-grid p-6 sm:p-8 lg:p-10">
-            <div className="space-y-8">
+            <div className="min-w-0 space-y-8">
               <div className="space-y-4">
                   <p className="editorial-kicker">Turn videos into readable notes</p>
                   <h2 className="title-display max-w-3xl">
@@ -679,7 +679,7 @@ export default function Dashboard() {
               )}
             </div>
 
-            <div className="grid gap-4">
+            <div className="min-w-0 grid gap-4">
               {latestNote && (
                 <Link to={`/note/${latestNote.id}`} className="editorial-card-muted overflow-hidden block transition-colors duration-200 hover:bg-canvas-100/80">
                   <div className="space-y-3 p-5">
@@ -687,9 +687,9 @@ export default function Dashboard() {
                     <h3 className="font-display text-2xl font-semibold leading-tight text-ink-900">
                       {latestNote.title}
                     </h3>
-                    <p className="flex items-center gap-2 truncate text-xs text-ink-400">
-                      <LinkIcon size={13} />
-                      <span className="truncate">{getNoteSourceUrl(latestNote)}</span>
+                    <p className="flex items-center gap-2 text-xs text-ink-400">
+                      <LinkIcon size={13} className="shrink-0" />
+                      <span className="min-w-0 truncate">{getNoteSourceUrl(latestNote)}</span>
                     </p>
                     <p className="text-sm leading-7 text-ink-500">{buildExcerpt(latestNote)}...</p>
                   </div>
@@ -898,9 +898,9 @@ export default function Dashboard() {
                           {buildExcerpt(note)}
                           ...
                         </p>
-                        <p className="flex items-center gap-2 truncate text-xs text-ink-400">
-                          <LinkIcon size={13} />
-                          <span className="truncate">{noteSourceUrl}</span>
+                        <p className="flex items-center gap-2 text-xs text-ink-400">
+                          <LinkIcon size={13} className="shrink-0" />
+                          <span className="min-w-0 truncate">{noteSourceUrl}</span>
                         </p>
                       </div>
 

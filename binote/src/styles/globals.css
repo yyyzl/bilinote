@@ -156,7 +156,7 @@
   }
 
   .surface-grid {
-    @apply grid gap-6 lg:grid-cols-[1.25fr_0.75fr];
+    @apply grid grid-cols-1 gap-6 lg:grid-cols-[minmax(0,1.25fr)_minmax(0,0.75fr)];
   }
 
   .metric-block {
