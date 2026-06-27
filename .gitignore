@@ -84,3 +84,6 @@ yarn-error.log*
 
 # === 本地保留的源码备份（不入库） ===
 *.backup
+
+# === design-sync 生成的上传产物（不入库） ===
+ds-bundle/

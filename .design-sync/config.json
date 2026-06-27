@@ -1,0 +1,7 @@
+{
+  "projectId": "cfa9b3f4-b6b2-434a-8880-a202865c49d2",
+  "projectName": "BiNote Design System",
+  "shape": "tokens-only",
+  "scope": "Design foundation only (tokens, fonts, paper aesthetic). BiNote is a Tauri application, not a component library, so no app-coupled components are synced.",
+  "readmeHeader": ".design-sync/conventions.md"
+}
