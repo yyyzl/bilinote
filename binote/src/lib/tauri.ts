@@ -79,6 +79,19 @@ export interface TaskInfo {
   progress: string;
   note_id: string | null;
   error: string | null;
+  /** 任务类型: "transcribe" | "summarize" | "mindmap" */
+  kind: string;
+  /** 转录任务对应的视频 bvid（总结/导图任务为 null） */
+  bvid: string | null;
+  /** 转录任务的原始输入链接 */
+  source_url: string | null;
+  /** 入队时间（Unix 秒），恢复队列时用于排序 */
+  created_at: number;
+}
+
+/** 任务列表条目：task_id + 任务信息（供页面重建后从后端恢复任务队列） */
+export interface TaskListEntry extends TaskInfo {
+  task_id: string;
 }
 
 /** QR 码生成结果 */
@@ -121,6 +134,7 @@ export const startTranscribe = (bvid: string, sourceUrl?: string) =>
 export const startSummarize = (noteId: string) => invoke<string>("start_summarize", { noteId });
 export const startMindmap = (noteId: string) => invoke<string>("start_mindmap", { noteId });
 export const getTaskStatus = (taskId: string) => invoke<TaskInfo>("get_task_status", { taskId });
+export const listTasks = () => invoke<TaskListEntry[]>("list_tasks");
 export const cancelTask = (taskId: string) => invoke("cancel_task", { taskId });
 export const consumeNotificationNavTarget = () => invoke<string | null>("consume_notification_nav_target");
 export const verifySessdata = (sessdata: string) => invoke<LoginStatus>("verify_sessdata", { sessdata });

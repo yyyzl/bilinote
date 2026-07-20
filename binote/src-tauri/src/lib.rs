@@ -65,6 +65,7 @@ pub fn run() {
             commands::summarize,
             commands::start_transcribe,
             commands::get_task_status,
+            commands::list_tasks,
             commands::start_summarize,
             commands::start_mindmap,
             commands::cancel_task,

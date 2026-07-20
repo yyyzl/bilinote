@@ -176,6 +176,52 @@ export default function Dashboard() {
     }, POLL_INTERVAL_MS);
   }, [loadNotes, patchTask, scheduleRemove]);
 
+  // 页面重建（路由切换 / Android Activity 重建）后从后端任务注册表恢复进行中的转录队列。
+  // 后端任务一直在跑，只是前端组件卸载时丢了内存态；这里按 taskId 合并，避免重复条目。
+  const rehydrateTasks = useCallback(async () => {
+    try {
+      const entries = await api.listTasks();
+      if (!isMountedRef.current) return;
+
+      const active = entries.filter(
+        (e) => e.kind === "transcribe" && (e.status === "queued" || e.status === "running")
+      );
+      if (active.length === 0) return;
+
+      setTasks((prev) => {
+        const known = new Set(prev.map((t) => t.taskId));
+        const restored = active
+          .filter((e) => !known.has(e.task_id))
+          .map<ActiveTask>((e) => ({
+            taskId: e.task_id,
+            bvid: e.bvid ?? "",
+            url: e.source_url ?? (e.bvid ? `https://www.bilibili.com/video/${e.bvid}` : ""),
+            title: e.bvid ?? "转录任务",
+            progress: e.progress,
+            status: e.status as TaskStatus,
+            error: e.error,
+          }));
+        return restored.length > 0 ? [...prev, ...restored] : prev;
+      });
+      ensurePolling();
+
+      // 异步补全视频标题（与新建任务同一策略：失败保留 bvid 占位）
+      for (const e of active) {
+        if (!e.bvid) continue;
+        void api
+          .getVideoInfo(e.bvid)
+          .then((info) => {
+            if (isMountedRef.current && info?.title) {
+              patchTask(e.task_id, { title: info.title });
+            }
+          })
+          .catch(() => {});
+      }
+    } catch (e) {
+      console.error(e);
+    }
+  }, [ensurePolling, patchTask]);
+
   const startTranscription = useCallback(
     async (url: string) => {
       const trimmed = url.trim();
@@ -245,6 +291,7 @@ export default function Dashboard() {
   useEffect(() => {
     isMountedRef.current = true;
     loadNotes();
+    void rehydrateTasks();
 
     let cleanup: (() => void) | undefined;
     let listenerCancelled = false;
@@ -278,7 +325,7 @@ export default function Dashboard() {
       removeTimersRef.current.forEach((timer) => clearTimeout(timer));
       removeTimersRef.current.clear();
     };
-  }, [loadNotes]);
+  }, [loadNotes, rehydrateTasks]);
 
   // 同步"是否有后台任务在处理"给 ShareContext
   useEffect(() => {

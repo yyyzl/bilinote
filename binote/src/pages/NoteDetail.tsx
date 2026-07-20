@@ -35,6 +35,8 @@ const GENERATE_CONFIG = {
   },
 } as const;
 
+const POLL_INTERVAL_MS = 2000;
+
 const TRANSCRIPT_SOURCE_META = {
   subtitle: {
     label: "字幕",
@@ -123,12 +125,14 @@ export default function NoteDetail() {
     }
 
     let cleanup: (() => void) | undefined;
-    api.onProgress((taskId, message, kind) => {
+    api.onProgress((taskId, message) => {
       if (!isMountedRef.current) return;
-      // 只接收属于本页当前任务的进度，忽略其它笔记的并发任务事件
-      if (kind === "summarize" && taskId === summaryTaskIdRef.current) {
+      // 按 task_id 匹配本页当前任务的进度（含被接管的转录自动生成阶段），
+      // 忽略其它笔记的并发任务事件。转录任务可同时驱动总结和导图两侧。
+      if (taskId === summaryTaskIdRef.current) {
         setSummaryProgress(message);
-      } else if (kind === "mindmap" && taskId === mindmapTaskIdRef.current) {
+      }
+      if (taskId === mindmapTaskIdRef.current) {
         setMindmapProgress(message);
       }
     }).then((fn) => {
@@ -166,6 +170,64 @@ export default function NoteDetail() {
     };
   }, [showTranscriptReason]);
 
+  // 接管一个后端任务：登记 task_id（用于进度事件路由）并轮询直到终态。
+  // 任务既可以是本页刚启动的，也可以是页面重建后从后端任务列表里恢复的。
+  const watchTask = useCallback(
+    (type: GenerateType, taskId: string) => {
+      const config = GENERATE_CONFIG[type];
+      const setLoading = type === "summary" ? setSummaryLoading : setMindmapLoading;
+      const setProgress = type === "summary" ? setSummaryProgress : setMindmapProgress;
+      const pollRef = type === "summary" ? summaryPollRef : mindmapPollRef;
+      const taskIdRef = type === "summary" ? summaryTaskIdRef : mindmapTaskIdRef;
+
+      taskIdRef.current = taskId;
+      clearPoll(type);
+
+      pollRef.current = setInterval(async () => {
+        if (!isMountedRef.current) {
+          clearPoll(type);
+          return;
+        }
+
+        try {
+          const taskInfo = await api.getTaskStatus(taskId);
+          if (!isMountedRef.current) return;
+
+          setProgress(taskInfo.progress);
+
+          if (taskInfo.status === "completed") {
+            clearPoll(type);
+            taskIdRef.current = null;
+            if (taskInfo.note_id) {
+              const updated = await api.getNote(taskInfo.note_id);
+              if (updated && isMountedRef.current) {
+                setNote(updated);
+              }
+            }
+            if (isMountedRef.current) {
+              setLoading(false);
+            }
+          } else if (taskInfo.status === "failed" || taskInfo.status === "cancelled") {
+            clearPoll(type);
+            taskIdRef.current = null;
+            if (isMountedRef.current) {
+              setError(taskInfo.error || config.defaultError);
+              setLoading(false);
+            }
+          }
+        } catch (e) {
+          clearPoll(type);
+          taskIdRef.current = null;
+          if (isMountedRef.current) {
+            setError(formatError(e));
+            setLoading(false);
+          }
+        }
+      }, POLL_INTERVAL_MS);
+    },
+    [clearPoll]
+  );
+
   const handleGenerate = useCallback(
     async (type: GenerateType) => {
       if (!id) return;
@@ -173,8 +235,6 @@ export default function NoteDetail() {
       const config = GENERATE_CONFIG[type];
       const setLoading = type === "summary" ? setSummaryLoading : setMindmapLoading;
       const setProgress = type === "summary" ? setSummaryProgress : setMindmapProgress;
-      const pollRef = type === "summary" ? summaryPollRef : mindmapPollRef;
-      const taskIdRef = type === "summary" ? summaryTaskIdRef : mindmapTaskIdRef;
 
       setLoading(true);
       setActiveTab(type);
@@ -182,50 +242,7 @@ export default function NoteDetail() {
 
       try {
         const taskId = await config.startApi(id);
-        taskIdRef.current = taskId;
-        clearPoll(type);
-
-        pollRef.current = setInterval(async () => {
-          if (!isMountedRef.current) {
-            clearPoll(type);
-            return;
-          }
-
-          try {
-            const taskInfo = await api.getTaskStatus(taskId);
-            if (!isMountedRef.current) return;
-
-            setProgress(taskInfo.progress);
-
-            if (taskInfo.status === "completed") {
-              clearPoll(type);
-              taskIdRef.current = null;
-              if (taskInfo.note_id) {
-                const updated = await api.getNote(taskInfo.note_id);
-                if (updated && isMountedRef.current) {
-                  setNote(updated);
-                }
-              }
-              if (isMountedRef.current) {
-                setLoading(false);
-              }
-            } else if (taskInfo.status === "failed" || taskInfo.status === "cancelled") {
-              clearPoll(type);
-              taskIdRef.current = null;
-              if (isMountedRef.current) {
-                setError(taskInfo.error || config.defaultError);
-                setLoading(false);
-              }
-            }
-          } catch (e) {
-            clearPoll(type);
-            taskIdRef.current = null;
-            if (isMountedRef.current) {
-              setError(formatError(e));
-              setLoading(false);
-            }
-          }
-        }, 2000);
+        watchTask(type, taskId);
       } catch (e) {
         if (isMountedRef.current) {
           setError(formatError(e));
@@ -233,8 +250,50 @@ export default function NoteDetail() {
         }
       }
     },
-    [id, clearPoll]
+    [id, watchTask]
   );
+
+  // 页面打开时检查后端是否已有针对本笔记的进行中任务：别处启动的总结/导图任务，
+  // 或转录任务的自动生成阶段（转录完成即落盘笔记，随后同一任务继续生成总结/导图）。
+  // 有则直接进入"生成中"状态并接管轮询，避免误显示"生成"按钮导致重复启动任务。
+  useEffect(() => {
+    if (!id) return;
+    let cancelled = false;
+
+    void (async () => {
+      try {
+        const [entries, config] = await Promise.all([api.listTasks(), api.getConfig()]);
+        if (cancelled || !isMountedRef.current) return;
+
+        const actives = entries.filter(
+          (e) => e.note_id === id && (e.status === "queued" || e.status === "running")
+        );
+        for (const e of actives) {
+          const adoptSummary =
+            e.kind === "summarize" || (e.kind === "transcribe" && config.auto_summary);
+          const adoptMindmap =
+            e.kind === "mindmap" || (e.kind === "transcribe" && config.auto_mindmap);
+
+          if (adoptSummary && !summaryTaskIdRef.current) {
+            setSummaryLoading(true);
+            setSummaryProgress(e.progress);
+            watchTask("summary", e.task_id);
+          }
+          if (adoptMindmap && !mindmapTaskIdRef.current) {
+            setMindmapLoading(true);
+            setMindmapProgress(e.progress);
+            watchTask("mindmap", e.task_id);
+          }
+        }
+      } catch (e) {
+        console.error(e);
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [id, watchTask]);
 
   const handleSummarize = useCallback(() => {
     void handleGenerate("summary");

@@ -40,6 +40,59 @@ pub struct TaskInfo {
     pub progress: String,
     pub note_id: Option<String>,
     pub error: Option<String>,
+    /// 任务类型：transcribe / summarize / mindmap
+    pub kind: String,
+    /// 转录任务对应的视频 bvid（总结/导图任务为 None）
+    pub bvid: Option<String>,
+    /// 转录任务的原始输入链接（用于前端恢复队列展示）
+    pub source_url: Option<String>,
+    /// 入队时间（Unix 秒），供前端恢复队列时排序
+    pub created_at: u64,
+}
+
+impl TaskInfo {
+    /// 新建一条"排队中"任务记录，携带供前端恢复队列所需的元数据。
+    fn queued(
+        kind: &str,
+        bvid: Option<String>,
+        source_url: Option<String>,
+        note_id: Option<String>,
+    ) -> Self {
+        Self {
+            status: "queued".into(),
+            progress: "排队中…".into(),
+            note_id,
+            error: None,
+            kind: kind.into(),
+            bvid,
+            source_url,
+            created_at: std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_secs())
+                .unwrap_or(0),
+        }
+    }
+}
+
+/// 就地更新任务状态，保留 kind / bvid / source_url / created_at 等元数据
+/// （整条 insert 覆盖会丢失这些字段，导致前端无法恢复队列）。
+/// `note_id` 传 None 时保留已有值，避免总结/导图任务在取消/失败后丢失笔记关联。
+fn settle_task(
+    tasks: &mut HashMap<String, TaskInfo>,
+    task_id: &str,
+    status: &str,
+    progress: &str,
+    note_id: Option<String>,
+    error: Option<String>,
+) {
+    if let Some(info) = tasks.get_mut(task_id) {
+        info.status = status.into();
+        info.progress = progress.into();
+        if note_id.is_some() {
+            info.note_id = note_id;
+        }
+        info.error = error;
+    }
 }
 
 /// 进度事件 payload：携带 task_id，使并发任务的进度能在前端按任务分流，互不串台。
@@ -604,12 +657,7 @@ pub async fn start_transcribe(
     // 初始为"排队中"：拿到并发许可后才转为 running（见 spawn 内逻辑）
     state.tasks.lock().unwrap().insert(
         task_id.clone(),
-        TaskInfo {
-            status: "queued".into(),
-            progress: "排队中…".into(),
-            note_id: None,
-            error: None,
-        },
+        TaskInfo::queued("transcribe", Some(bvid.clone()), source_url.clone(), None),
     );
 
     let task_id_clone = task_id.clone();
@@ -625,12 +673,14 @@ pub async fn start_transcribe(
         let _permit = tokio::select! {
             _ = cancel_token_clone.cancelled() => {
                 let state = app_clone.state::<AppState>();
-                state.tasks.lock().unwrap().insert(task_id_clone.clone(), TaskInfo {
-                    status: "cancelled".into(),
-                    progress: "已取消".into(),
-                    note_id: None,
-                    error: Some("任务已被取消".into()),
-                });
+                settle_task(
+                    &mut state.tasks.lock().unwrap(),
+                    &task_id_clone,
+                    "cancelled",
+                    "已取消",
+                    None,
+                    Some("任务已被取消".into()),
+                );
                 state.task_handles.lock().unwrap().remove(&task_id_clone);
                 return;
             }
@@ -654,12 +704,14 @@ pub async fn start_transcribe(
         let result = tokio::select! {
             _ = cancel_token_clone.cancelled() => {
                 let state = app_clone.state::<AppState>();
-                state.tasks.lock().unwrap().insert(task_id_clone.clone(), TaskInfo {
-                    status: "cancelled".into(),
-                    progress: "已取消".into(),
-                    note_id: None,
-                    error: Some("任务已被取消".into()),
-                });
+                settle_task(
+                    &mut state.tasks.lock().unwrap(),
+                    &task_id_clone,
+                    "cancelled",
+                    "已取消",
+                    None,
+                    Some("任务已被取消".into()),
+                );
                 // 清理任务句柄，防止内存泄漏
                 state.task_handles.lock().unwrap().remove(&task_id_clone);
                 return;
@@ -671,14 +723,13 @@ pub async fn start_transcribe(
         let mut tasks = state.tasks.lock().unwrap();
         match result {
             Ok(TranscribeResult::FullSuccess(note)) => {
-                tasks.insert(
-                    task_id_clone.clone(),
-                    TaskInfo {
-                        status: "completed".into(),
-                        progress: "完成".into(),
-                        note_id: Some(note.id.clone()),
-                        error: None,
-                    },
+                settle_task(
+                    &mut tasks,
+                    &task_id_clone,
+                    "completed",
+                    "完成",
+                    Some(note.id.clone()),
+                    None,
                 );
                 send_notification(
                     &app_clone,
@@ -717,26 +768,24 @@ pub async fn start_transcribe(
                     (None, None) => None,
                 };
 
-                tasks.insert(
-                    task_id_clone.clone(),
-                    TaskInfo {
-                        status: "completed".into(),
-                        progress: "完成".into(),
-                        note_id: Some(note.id.clone()),
-                        error: error_msg,
-                    },
+                settle_task(
+                    &mut tasks,
+                    &task_id_clone,
+                    "completed",
+                    "完成",
+                    Some(note.id.clone()),
+                    error_msg,
                 );
                 send_notification(&app_clone, notification_type);
             }
             Err(e) => {
-                tasks.insert(
-                    task_id_clone.clone(),
-                    TaskInfo {
-                        status: "failed".into(),
-                        progress: "失败".into(),
-                        note_id: None,
-                        error: Some(e.to_string()),
-                    },
+                settle_task(
+                    &mut tasks,
+                    &task_id_clone,
+                    "failed",
+                    "失败",
+                    None,
+                    Some(e.to_string()),
                 );
 
                 // 发送转录失败通知
@@ -769,6 +818,34 @@ pub async fn get_task_status(state: State<'_, AppState>, task_id: String) -> Res
         .ok_or(crate::error::AppError::StoreError("任务不存在".into()))
 }
 
+/// 任务列表条目：task_id + 任务信息（供前端在页面重建后恢复队列）
+#[derive(Serialize)]
+pub struct TaskListEntry {
+    pub task_id: String,
+    #[serde(flatten)]
+    pub info: TaskInfo,
+}
+
+#[tauri::command]
+pub async fn list_tasks(state: State<'_, AppState>) -> Result<Vec<TaskListEntry>> {
+    let tasks = state.tasks.lock().unwrap();
+    let mut entries: Vec<TaskListEntry> = tasks
+        .iter()
+        .map(|(id, info)| TaskListEntry {
+            task_id: id.clone(),
+            info: info.clone(),
+        })
+        .collect();
+    // created_at 精度为秒，同秒任务以 task_id 二次排序保证顺序稳定
+    entries.sort_by(|a, b| {
+        a.info
+            .created_at
+            .cmp(&b.info.created_at)
+            .then_with(|| a.task_id.cmp(&b.task_id))
+    });
+    Ok(entries)
+}
+
 async fn transcribe_background(
     bvid: String,
     source_url: Option<String>,
@@ -795,6 +872,14 @@ async fn transcribe_background(
         &task_id,
     )
     .await?;
+
+    // 笔记已落盘：立刻把 note_id 回填到任务记录，
+    // 让 NoteDetail 页能在自动总结/导图阶段就匹配到本任务（而不是等到终态）。
+    if let Ok(mut tasks) = state.tasks.lock() {
+        if let Some(info) = tasks.get_mut(&task_id) {
+            info.note_id = Some(note.id.clone());
+        }
+    }
 
     // 检查取消状态
     if cancel_token.is_cancelled() {
@@ -997,12 +1082,7 @@ pub async fn start_summarize(
 
     state.tasks.lock().unwrap().insert(
         task_id.clone(),
-        TaskInfo {
-            status: "queued".into(),
-            progress: "排队中…".into(),
-            note_id: Some(note_id.clone()),
-            error: None,
-        },
+        TaskInfo::queued("summarize", None, None, Some(note_id.clone())),
     );
 
     let task_id_clone = task_id.clone();
@@ -1017,12 +1097,14 @@ pub async fn start_summarize(
         let _permit = tokio::select! {
             _ = cancel_token_clone.cancelled() => {
                 let state = app_clone.state::<AppState>();
-                state.tasks.lock().unwrap().insert(task_id_clone.clone(), TaskInfo {
-                    status: "cancelled".into(),
-                    progress: "已取消".into(),
-                    note_id: None,
-                    error: Some("任务已被取消".into()),
-                });
+                settle_task(
+                    &mut state.tasks.lock().unwrap(),
+                    &task_id_clone,
+                    "cancelled",
+                    "已取消",
+                    None,
+                    Some("任务已被取消".into()),
+                );
                 state.task_handles.lock().unwrap().remove(&task_id_clone);
                 return;
             }
@@ -1045,12 +1127,14 @@ pub async fn start_summarize(
         let result = tokio::select! {
             _ = cancel_token_clone.cancelled() => {
                 let state = app_clone.state::<AppState>();
-                state.tasks.lock().unwrap().insert(task_id_clone.clone(), TaskInfo {
-                    status: "cancelled".into(),
-                    progress: "已取消".into(),
-                    note_id: None,
-                    error: Some("任务已被取消".into()),
-                });
+                settle_task(
+                    &mut state.tasks.lock().unwrap(),
+                    &task_id_clone,
+                    "cancelled",
+                    "已取消",
+                    None,
+                    Some("任务已被取消".into()),
+                );
                 // 清理任务句柄，防止内存泄漏
                 state.task_handles.lock().unwrap().remove(&task_id_clone);
                 return;
@@ -1062,14 +1146,13 @@ pub async fn start_summarize(
         let mut tasks = state.tasks.lock().unwrap();
         match result {
             Ok(note) => {
-                tasks.insert(
-                    task_id_clone.clone(),
-                    TaskInfo {
-                        status: "completed".into(),
-                        progress: "完成".into(),
-                        note_id: Some(note.id.clone()),
-                        error: None,
-                    },
+                settle_task(
+                    &mut tasks,
+                    &task_id_clone,
+                    "completed",
+                    "完成",
+                    Some(note.id.clone()),
+                    None,
                 );
 
                 // 发送总结成功通知
@@ -1082,14 +1165,13 @@ pub async fn start_summarize(
                 );
             }
             Err(e) => {
-                tasks.insert(
-                    task_id_clone.clone(),
-                    TaskInfo {
-                        status: "failed".into(),
-                        progress: "失败".into(),
-                        note_id: None,
-                        error: Some(e.to_string()),
-                    },
+                settle_task(
+                    &mut tasks,
+                    &task_id_clone,
+                    "failed",
+                    "失败",
+                    None,
+                    Some(e.to_string()),
                 );
 
                 // 发送总结失败通知
@@ -1190,12 +1272,7 @@ pub async fn start_mindmap(
 
     state.tasks.lock().unwrap().insert(
         task_id.clone(),
-        TaskInfo {
-            status: "queued".into(),
-            progress: "排队中…".into(),
-            note_id: Some(note_id.clone()),
-            error: None,
-        },
+        TaskInfo::queued("mindmap", None, None, Some(note_id.clone())),
     );
 
     let task_id_clone = task_id.clone();
@@ -1210,12 +1287,14 @@ pub async fn start_mindmap(
         let _permit = tokio::select! {
             _ = cancel_token_clone.cancelled() => {
                 let state = app_clone.state::<AppState>();
-                state.tasks.lock().unwrap().insert(task_id_clone.clone(), TaskInfo {
-                    status: "cancelled".into(),
-                    progress: "已取消".into(),
-                    note_id: None,
-                    error: Some("任务已被取消".into()),
-                });
+                settle_task(
+                    &mut state.tasks.lock().unwrap(),
+                    &task_id_clone,
+                    "cancelled",
+                    "已取消",
+                    None,
+                    Some("任务已被取消".into()),
+                );
                 state.task_handles.lock().unwrap().remove(&task_id_clone);
                 return;
             }
@@ -1238,12 +1317,14 @@ pub async fn start_mindmap(
         let result = tokio::select! {
             _ = cancel_token_clone.cancelled() => {
                 let state = app_clone.state::<AppState>();
-                state.tasks.lock().unwrap().insert(task_id_clone.clone(), TaskInfo {
-                    status: "cancelled".into(),
-                    progress: "已取消".into(),
-                    note_id: None,
-                    error: Some("任务已被取消".into()),
-                });
+                settle_task(
+                    &mut state.tasks.lock().unwrap(),
+                    &task_id_clone,
+                    "cancelled",
+                    "已取消",
+                    None,
+                    Some("任务已被取消".into()),
+                );
                 // 清理任务句柄，防止内存泄漏
                 state.task_handles.lock().unwrap().remove(&task_id_clone);
                 return;
@@ -1255,14 +1336,13 @@ pub async fn start_mindmap(
         let mut tasks = state.tasks.lock().unwrap();
         match result {
             Ok(note) => {
-                tasks.insert(
-                    task_id_clone.clone(),
-                    TaskInfo {
-                        status: "completed".into(),
-                        progress: "完成".into(),
-                        note_id: Some(note.id.clone()),
-                        error: None,
-                    },
+                settle_task(
+                    &mut tasks,
+                    &task_id_clone,
+                    "completed",
+                    "完成",
+                    Some(note.id.clone()),
+                    None,
                 );
 
                 // 发送思维导图成功通知
@@ -1275,14 +1355,13 @@ pub async fn start_mindmap(
                 );
             }
             Err(e) => {
-                tasks.insert(
-                    task_id_clone.clone(),
-                    TaskInfo {
-                        status: "failed".into(),
-                        progress: "失败".into(),
-                        note_id: None,
-                        error: Some(e.to_string()),
-                    },
+                settle_task(
+                    &mut tasks,
+                    &task_id_clone,
+                    "failed",
+                    "失败",
+                    None,
+                    Some(e.to_string()),
                 );
 
                 // 发送思维导图失败通知
