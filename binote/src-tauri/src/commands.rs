@@ -456,12 +456,12 @@ async fn perform_transcription(
 }
 
 /// 获取任务标志文件路径
-fn get_task_flag_path(app: &AppHandle) -> Option<PathBuf> {
+pub(crate) fn get_task_flag_path(app: &AppHandle) -> Option<PathBuf> {
     app.path().data_dir().ok().map(|p| p.join(".task_running"))
 }
 
-/// 写入 / 删除任务运行标志文件（仅由 `TaskFlagGuard` 与应用退出清理调用）。
-fn set_task_flag_file(app: &AppHandle, running: bool) {
+/// 写入 / 删除任务运行标志文件（由 `TaskFlagGuard`、应用启动残留清理与退出清理调用）。
+pub(crate) fn set_task_flag_file(app: &AppHandle, running: bool) {
     if let Some(flag_path) = get_task_flag_path(app) {
         if running {
             // 创建标志文件

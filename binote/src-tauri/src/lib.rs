@@ -43,6 +43,14 @@ pub fn run() {
                 llm_gate: Arc::new(Semaphore::new(max_concurrent)),
                 active_tasks: Arc::new(AtomicUsize::new(0)),
             });
+
+            // 启动时清理可能残留的任务标志：上次若被系统强杀，未走 RunEvent::Exit 清理路径，
+            // .task_running 会残留，导致 Android 端 FileObserver 误判为有任务而启动幽灵前台服务。
+            // 新进程内必然没有正在运行的后端任务（tokio 任务不跨进程存活），直接清除是安全的。
+            if let Some(flag_path) = commands::get_task_flag_path(app.handle()) {
+                println!("[BiNote] task flag path = {:?}", flag_path);
+            }
+            commands::set_task_flag_file(app.handle(), false);
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
