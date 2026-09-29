@@ -19,6 +19,15 @@ pub struct AppConfig {
     pub llm_api_key: Option<String>,
     pub llm_base_url: Option<String>,
     pub llm_model: Option<String>,
+    /// 文本生成接入方式；旧配置保持 API 模式。
+    #[serde(default)]
+    pub llm_provider: crate::generation::LlmProvider,
+    #[serde(default)]
+    pub codex_model: Option<String>,
+    #[serde(default)]
+    pub codex_path: Option<String>,
+    #[serde(default)]
+    pub codex_fast: bool,
     /// B站 SESSDATA Cookie（用于获取字幕）
     pub bilibili_sessdata: Option<String>,
     /// B站 bili_jct（CSRF token，扫码登录自动获取，用于 Cookie 刷新）
@@ -61,6 +70,10 @@ impl Default for AppConfig {
             llm_api_key: None,
             llm_base_url: None,
             llm_model: None,
+            llm_provider: crate::generation::LlmProvider::Api,
+            codex_model: None,
+            codex_path: None,
+            codex_fast: false,
             bilibili_sessdata: None,
             bilibili_bili_jct: None,
             bilibili_refresh_token: None,

@@ -28,6 +28,7 @@ export interface Note {
 }
 
 export type AsrProvider = "dashscope" | "sensevoice";
+export type LlmProvider = "api" | "codex";
 
 export interface AppConfig {
   asr_provider: AsrProvider;
@@ -36,6 +37,10 @@ export interface AppConfig {
   llm_api_key: string | null;
   llm_base_url: string | null;
   llm_model: string | null;
+  llm_provider: LlmProvider;
+  codex_model: string | null;
+  codex_path: string | null;
+  codex_fast: boolean;
   /** B站 SESSDATA Cookie（用于获取字幕） */
   bilibili_sessdata: string | null;
   /** B站 bili_jct（CSRF token，扫码登录自动获取） */
@@ -152,6 +157,10 @@ export const testLlmConnection = (
 
 export const testAsrConnection = (provider: AsrProvider, apiKey: string) =>
   invoke<ConnectionTestResult>("test_asr_connection", { provider, apiKey });
+
+export const supportsCodex = () => invoke<boolean>("supports_codex");
+export const testCodexConnection = (model: string, executable: string | null, fast: boolean) =>
+  invoke<ConnectionTestResult>("test_codex_connection", { model, executable, fast });
 
 // ====== 扫码登录 ======
 export const qrcodeGenerate = () => invoke<QrcodeInfo>("qrcode_generate");

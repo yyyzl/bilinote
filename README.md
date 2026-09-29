@@ -122,6 +122,19 @@ bash build-android.sh
 | LLM Model | 默认 `gpt-4o-mini`，可换 `claude-sonnet-4-5`、`deepseek-chat`、`qwen-plus` 等 |
 | B站登录 | 在设置页扫码登录，登录后可转 1080P / 大会员视频 |
 
+### Windows / macOS：使用 Codex 订阅
+
+桌面端可在「设置 → 语言模型 → 接入方式」选择 **Codex 订阅**，用于生成总结和思维导图。
+
+1. 先安装官方 [Codex CLI](https://learn.chatgpt.com/docs/cli)，在终端执行 `codex login`，使用 ChatGPT 账户登录。
+2. 在 BiNote 中手动填写模型名称，例如账户已能使用的 `gpt-6-luna`。应用不查询模型列表、账户详情或剩余额度。
+3. 点击 **测试 Codex 连接**。测试使用当前表单参数发送短请求，验证登录、模型和返回结果，最多等待 60 秒，会消耗少量订阅额度。
+4. 测试成功后保存设置。总结和思维导图会使用所填模型；语音转录仍使用原有 ASR 服务。
+
+默认使用标准速度，Fast 可选且会消耗更多订阅额度。找不到本机 Codex 时，可在高级选项填写完整程序路径（Windows 支持 npm 的 `codex.cmd` 启动器路径及原生 `codex.exe`）。登录失效时重新执行 `codex login`；额度耗尽时等待恢复。应用不会自动切换到付费 API。
+
+此功能使用 `codex exec`，复用本机登录；API Key 和 Codex 配置各自保存，切换接入方式不会清空。CLI 参数以 `0.156.1` 为核对版本，旧版本不支持参数时请升级。Android 不提供此入口。2026-09-28 已在 Windows 发布版验证本机 ChatGPT 登录、`gpt-6-luna` 标准/Fast 连接、无效模型报错、总结及导图生成与重启后保留；macOS 实机验证仍需完成。
+
 配置存放位置（不经任何第三方）：
 
 - Windows: `%APPDATA%\com.binote.app\config.json`

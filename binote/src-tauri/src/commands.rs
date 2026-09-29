@@ -4,6 +4,7 @@ use crate::{
     bilibili::{BilibiliClient, LoginStatus, PageInfo, VideoInfo},
     connection_test::ConnectionTestResult,
     error::Result,
+    generation::{GenerationClient, LlmProvider},
     llm::LlmClient,
     notification::{send_notification, NotificationType},
     retry::RetryContext,
@@ -592,13 +593,7 @@ pub async fn summarize(
 ) -> Result<Note> {
     let config = state.store.lock().unwrap().load_config()?;
 
-    let llm_key = config.llm_api_key.ok_or(crate::error::AppError::LlmError(
-        "未配置 LLM API Key".into(),
-    ))?;
-    let base_url = config
-        .llm_base_url
-        .unwrap_or("https://api.openai.com/v1".into());
-    let model = config.llm_model.unwrap_or("gpt-4o-mini".into());
+    let llm = generation_client(&app, &config)?;
 
     let note = state
         .store
@@ -611,9 +606,8 @@ pub async fn summarize(
 
     let _ = app.emit("summarize:progress", "生成总结...");
 
-    let llm = LlmClient::new(llm_key, base_url, model);
     let app_clone = app.clone();
-    let summary = llm
+    let generation = llm
         .summarize_with_retry(
             &note.transcript,
             &note.title,
@@ -630,8 +624,11 @@ pub async fn summarize(
                 };
                 let _ = app_clone.emit("summarize:progress", msg);
             }),
-        )
-        .await?;
+        );
+    let summary = tokio::select! {
+        _ = state.global_cancel.cancelled() => return Err(crate::error::AppError::StoreError("任务已取消".into())),
+        result = generation => result?,
+    };
 
     let note = state
         .store
@@ -903,23 +900,24 @@ async fn transcribe_background(
         });
     }
 
-    // 检查 LLM 配置是否有效
-    let llm_key = match &config.llm_api_key {
-        Some(key) if !key.is_empty() => key.clone(),
-        _ => {
-            return Ok(TranscribeResult::TranscribeOnly {
-                note,
-                summarize_error: None,
-                mindmap_error: None,
-            })
-        }
+    // 未配置 API 时保持纯转录；Codex 认证不依赖 API Key。
+    if config.llm_provider == LlmProvider::Api
+        && config.llm_api_key.as_deref().unwrap_or("").trim().is_empty()
+    {
+        return Ok(TranscribeResult::TranscribeOnly {
+            note,
+            summarize_error: None,
+            mindmap_error: None,
+        });
+    }
+    let llm = match generation_client(&app, &config) {
+        Ok(client) => client,
+        Err(error) => return Ok(TranscribeResult::TranscribeOnly {
+            note,
+            summarize_error: auto_summary.then(|| error.to_string()),
+            mindmap_error: auto_mindmap.then(|| error.to_string()),
+        }),
     };
-
-    let base_url = config
-        .llm_base_url
-        .clone()
-        .unwrap_or("https://api.openai.com/v1".into());
-    let model = config.llm_model.clone().unwrap_or("gpt-4o-mini".into());
 
     // 进度文案按开关组合：两个都开 → "总结和思维导图"；单选 → 对应项
     let progress_label = match (auto_summary, auto_mindmap) {
@@ -929,9 +927,6 @@ async fn transcribe_background(
         (false, false) => unreachable!("已在上方提前返回"),
     };
     emit_progress(&app, "transcribe:progress", &task_id, progress_label);
-
-    // 创建 LLM 客户端（内部 reqwest::Client 是 Arc，clone 廉价）
-    let llm = LlmClient::new(llm_key, base_url, model);
 
     // 准备并行 future：未启用的项直接返回 None，避免无谓的 LLM 调用。
     // 流式版本通过 update_stream_progress 同时写 task.progress + emit
@@ -1197,13 +1192,7 @@ async fn summarize_background(note_id: String, task_id: String, app: AppHandle) 
     let state = app.state::<AppState>();
     let config = state.store.lock().unwrap().load_config()?;
 
-    let llm_key = config.llm_api_key.ok_or(crate::error::AppError::LlmError(
-        "未配置 LLM API Key".into(),
-    ))?;
-    let base_url = config
-        .llm_base_url
-        .unwrap_or("https://api.openai.com/v1".into());
-    let model = config.llm_model.unwrap_or("gpt-4o-mini".into());
+    let llm = generation_client(&app, &config)?;
 
     let note = state
         .store
@@ -1216,7 +1205,6 @@ async fn summarize_background(note_id: String, task_id: String, app: AppHandle) 
 
     emit_progress(&app, "summarize:progress", &task_id, "生成总结...");
 
-    let llm = LlmClient::new(llm_key, base_url, model);
     let app_retry = app.clone();
     let task_id_retry = task_id.clone();
     let app_progress = app.clone();
@@ -1387,13 +1375,7 @@ async fn mindmap_background(note_id: String, task_id: String, app: AppHandle) ->
     let state = app.state::<AppState>();
     let config = state.store.lock().unwrap().load_config()?;
 
-    let llm_key = config.llm_api_key.ok_or(crate::error::AppError::LlmError(
-        "未配置 LLM API Key".into(),
-    ))?;
-    let base_url = config
-        .llm_base_url
-        .unwrap_or("https://api.openai.com/v1".into());
-    let model = config.llm_model.unwrap_or("gpt-4o-mini".into());
+    let llm = generation_client(&app, &config)?;
 
     let note = state
         .store
@@ -1406,7 +1388,6 @@ async fn mindmap_background(note_id: String, task_id: String, app: AppHandle) ->
 
     emit_progress(&app, "mindmap:progress", &task_id, "生成思维导图...");
 
-    let llm = LlmClient::new(llm_key, base_url, model);
     let app_retry = app.clone();
     let task_id_retry = task_id.clone();
     let app_progress = app.clone();
@@ -1447,6 +1428,41 @@ async fn mindmap_background(note_id: String, task_id: String, app: AppHandle) ->
         .update_note(&note_id, |n| n.mindmap = Some(mindmap))?;
 
     Ok(note)
+}
+
+fn codex_work_dir(app: &AppHandle) -> Result<PathBuf> {
+    app.path().app_cache_dir().map(|path| path.join("codex-workspace"))
+        .map_err(|_| crate::error::AppError::StoreError("无法访问 Codex 工作目录".into()))
+}
+
+fn generation_client(app: &AppHandle, config: &AppConfig) -> Result<GenerationClient> {
+    let work_dir = if config.llm_provider == LlmProvider::Codex {
+        codex_work_dir(app)?
+    } else {
+        PathBuf::new()
+    };
+    GenerationClient::from_config(config, work_dir)
+}
+
+#[tauri::command]
+pub fn supports_codex() -> bool {
+    crate::codex::supported()
+}
+
+/// 测试与正式生成使用相同执行器；只在用户点击时发送短请求。
+#[tauri::command]
+pub async fn test_codex_connection(
+    model: String,
+    executable: Option<String>,
+    fast: bool,
+    app: AppHandle,
+    state: State<'_, AppState>,
+) -> Result<ConnectionTestResult> {
+    let client = crate::codex::CodexClient::new(model, executable, fast, codex_work_dir(&app)?)?;
+    tokio::select! {
+        _ = state.global_cancel.cancelled() => Ok(ConnectionTestResult::error("Codex 测试已取消", 0)),
+        result = client.test_connection() => Ok(result),
+    }
 }
 
 /// 验证 B站 SESSDATA 有效性

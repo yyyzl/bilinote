@@ -1,0 +1,44 @@
+{
+  "id": "desktop-codex-subscription",
+  "name": "desktop-codex-subscription",
+  "title": "桌面端 Codex 订阅接入",
+  "description": "",
+  "status": "review",
+  "dev_type": "fullstack",
+  "scope": null,
+  "priority": "P2",
+  "creator": "your-name",
+  "assignee": "your-name",
+  "createdAt": "2026-09-27",
+  "completedAt": null,
+  "branch": null,
+  "base_branch": "main",
+  "worktree_path": null,
+  "current_phase": 2,
+  "next_action": [
+    {
+      "phase": 1,
+      "action": "implement"
+    },
+    {
+      "phase": 2,
+      "action": "check"
+    },
+    {
+      "phase": 3,
+      "action": "finish"
+    },
+    {
+      "phase": 4,
+      "action": "create-pr"
+    }
+  ],
+  "commit": null,
+  "pr_url": null,
+  "subtasks": [],
+  "children": [],
+  "parent": null,
+  "relatedFiles": [],
+  "notes": "Windows x64 EXE/MSI 打包成功；2026-09-28 本机发布版真实验收通过：Luna 标准/Fast、错误模型提示、总结/导图生成及重启保留。原有 185 条笔记未变。macOS 与安装器安装流程仍待验证。",
+  "meta": {}
+}

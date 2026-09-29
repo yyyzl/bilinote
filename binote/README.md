@@ -2,6 +2,8 @@
 
 应用源码目录。完整说明（功能、下载、打包、API 配置等）请见仓库根目录 [`README.md`](../README.md)。
 
+Windows / macOS 已接入本机 `codex exec`：设置页选择「Codex 订阅」，手填模型并测试连接后保存。需先安装 Codex CLI 并执行 `codex login`；详细步骤与验证边界见根目录说明。
+
 ## 子目录速览
 
 | 路径 | 说明 |

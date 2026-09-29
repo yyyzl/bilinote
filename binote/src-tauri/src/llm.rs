@@ -400,7 +400,7 @@ impl LlmClient {
     }
 }
 
-fn build_summary_prompt(title: &str, transcript: &str) -> String {
+pub(crate) fn build_summary_prompt(title: &str, transcript: &str) -> String {
     format!(
         r#"请为以下B站视频生成一份结构化的内容总结笔记。
 
@@ -441,7 +441,7 @@ fn build_summary_prompt(title: &str, transcript: &str) -> String {
     )
 }
 
-fn build_mindmap_prompt(title: &str, transcript: &str) -> String {
+pub(crate) fn build_mindmap_prompt(title: &str, transcript: &str) -> String {
     format!(
         r#"请根据以下视频内容生成一个 Mermaid 思维导图。
 
@@ -482,7 +482,7 @@ mindmap
 }
 
 /// 清理 LLM 返回的 Mermaid 代码中可能残留的 markdown 代码块标记
-fn clean_mindmap(content: &str) -> String {
+pub(crate) fn clean_mindmap(content: &str) -> String {
     content
         .trim()
         .trim_start_matches("```mermaid")

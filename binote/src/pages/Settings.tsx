@@ -23,6 +23,7 @@ import { QRCodeSVG } from "qrcode.react";
 import { Link } from "react-router-dom";
 import * as api from "../lib/tauri";
 import ErrorModal, { formatError } from "../components/ErrorModal";
+import CodexSettings from "../components/CodexSettings";
 
 type SessdataStatus = "idle" | "verifying" | "valid" | "expired" | "error";
 type QrLoginState = "idle" | "loading" | "showing" | "scanned" | "success" | "expired" | "error";
@@ -105,6 +106,10 @@ export default function Settings() {
     llm_api_key: null,
     llm_base_url: null,
     llm_model: null,
+    llm_provider: "api",
+    codex_model: null,
+    codex_path: null,
+    codex_fast: false,
     bilibili_sessdata: null,
     bilibili_bili_jct: null,
     bilibili_refresh_token: null,
@@ -115,6 +120,7 @@ export default function Settings() {
     max_concurrent_transcribe: 2,
   });
   const [saved, setSaved] = useState(false);
+  const [codexSupported, setCodexSupported] = useState(false);
   const [error, setError] = useState("");
   const [sessdataStatus, setSessdataStatus] = useState<SessdataStatus>("idle");
   const [sessdataMsg, setSessdataMsg] = useState("");
@@ -203,6 +209,11 @@ export default function Settings() {
     isMountedRef.current = true;
     void loadConfig();
     void checkLoginStatus();
+    void api.supportsCodex().then((supported) => {
+      if (isMountedRef.current) setCodexSupported(supported);
+    }).catch(() => {
+      if (isMountedRef.current) setCodexSupported(false);
+    });
 
     return () => {
       isMountedRef.current = false;
@@ -430,7 +441,9 @@ export default function Settings() {
   };
 
   const activeAsrProviderLabel = config.asr_provider === "dashscope" ? "DashScope" : "SenseVoice";
-  const llmConfigured = Boolean(config.llm_api_key && config.llm_model);
+  const llmConfigured = config.llm_provider === "codex"
+    ? codexSupported && Boolean(config.codex_model?.trim())
+    : Boolean(config.llm_api_key && config.llm_model);
   const qrFrameStateClass =
     qrLoginState === "expired"
       ? "border-ink-200 opacity-40"
@@ -769,51 +782,78 @@ export default function Settings() {
               </div>
 
               <div className="space-y-5 pt-6">
-                <SectionField label="API Key">
-                  <input
-                    type="password"
-                    value={config.llm_api_key || ""}
-                    onChange={(event) => {
-                      setConfig({ ...config, llm_api_key: event.target.value });
-                      setLlmTest(INITIAL_TEST_STATE);
-                    }}
-                    placeholder="sk-..."
-                    className="input-shell"
-                  />
-                </SectionField>
+                {codexSupported && (
+                  <div className="space-y-2">
+                    <p className="text-sm font-semibold text-ink-700">接入方式</p>
+                    <div className="grid grid-cols-2 gap-3" role="group" aria-label="语言模型接入方式">
+                      {([{ value: "api", label: "API 服务" }, { value: "codex", label: "Codex 订阅" }] as const).map((provider) => (
+                        <button
+                          key={provider.value}
+                          type="button"
+                          aria-pressed={config.llm_provider === provider.value}
+                          onClick={() => setConfig({ ...config, llm_provider: provider.value })}
+                          className={`rounded-2xl border px-4 py-3 text-sm font-semibold transition-colors ${config.llm_provider === provider.value ? "border-sage-300 bg-sage-100 text-sage-700" : "border-ink-100 text-ink-500 hover:border-ink-200"}`}
+                        >{provider.label}</button>
+                      ))}
+                    </div>
+                  </div>
+                )}
+                {config.llm_provider === "codex" ? (
+                  codexSupported ? <CodexSettings config={config} onChange={setConfig} /> : (
+                    <div className="space-y-3 text-sm text-ink-500">
+                      <p>当前设备不支持 Codex 接入，请切换为 API 服务。</p>
+                      <button type="button" className="button-secondary" onClick={() => setConfig({ ...config, llm_provider: "api" })}>使用 API 服务</button>
+                    </div>
+                  )
+                ) : (
+                  <>
+                    <SectionField label="API Key">
+                      <input
+                        type="password"
+                        value={config.llm_api_key || ""}
+                        onChange={(event) => {
+                          setConfig({ ...config, llm_api_key: event.target.value });
+                          setLlmTest(INITIAL_TEST_STATE);
+                        }}
+                        placeholder="sk-..."
+                        className="input-shell"
+                      />
+                    </SectionField>
 
-                <SectionField label="Base URL" description="如果你使用兼容 OpenAI 协议的服务，请填写完整地址。">
-                  <input
-                    type="text"
-                    value={config.llm_base_url || ""}
-                    onChange={(event) => {
-                      setConfig({ ...config, llm_base_url: event.target.value });
-                      setLlmTest(INITIAL_TEST_STATE);
-                    }}
-                    placeholder="https://api.openai.com/v1"
-                    className="input-shell"
-                  />
-                </SectionField>
+                    <SectionField label="Base URL" description="如果你使用兼容 OpenAI 协议的服务，请填写完整地址。">
+                      <input
+                        type="text"
+                        value={config.llm_base_url || ""}
+                        onChange={(event) => {
+                          setConfig({ ...config, llm_base_url: event.target.value });
+                          setLlmTest(INITIAL_TEST_STATE);
+                        }}
+                        placeholder="https://api.openai.com/v1"
+                        className="input-shell"
+                      />
+                    </SectionField>
 
-                <SectionField label="Model">
-                  <input
-                    type="text"
-                    value={config.llm_model || ""}
-                    onChange={(event) => {
-                      setConfig({ ...config, llm_model: event.target.value });
-                      setLlmTest(INITIAL_TEST_STATE);
-                    }}
-                    placeholder="gpt-4o-mini"
-                    className="input-shell"
-                  />
-                </SectionField>
+                    <SectionField label="Model">
+                      <input
+                        type="text"
+                        value={config.llm_model || ""}
+                        onChange={(event) => {
+                          setConfig({ ...config, llm_model: event.target.value });
+                          setLlmTest(INITIAL_TEST_STATE);
+                        }}
+                        placeholder="gpt-4o-mini"
+                        className="input-shell"
+                      />
+                    </SectionField>
 
-                <ConnectionTestRow
-                  label="测试 LLM 连接"
-                  state={llmTest}
-                  onTest={() => void handleTestLlm()}
-                  disabled={!config.llm_api_key}
-                />
+                    <ConnectionTestRow
+                      label="测试 LLM 连接"
+                      state={llmTest}
+                      onTest={() => void handleTestLlm()}
+                      disabled={!config.llm_api_key}
+                    />
+                  </>
+                )}
 
                 <SectionField
                   label="转录后自动生成"

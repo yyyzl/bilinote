@@ -19,6 +19,7 @@ This directory contains guidelines for backend development. Fill in each file wi
 | [Error Handling](./error-handling.md) | AppError enum, retry, error propagation | Done |
 | [Quality Guidelines](./quality-guidelines.md) | Code standards, forbidden patterns, review checklist | Done |
 | [Logging Guidelines](./logging-guidelines.md) | Current practice + future recommendations | Done |
+| [Codex Integration](./codex-integration.md) | 桌面端 Codex 进程、配置与连接验证契约 | Done |
 
 ---
 

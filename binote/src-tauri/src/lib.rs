@@ -2,8 +2,10 @@ pub mod asr;
 pub mod auth;
 pub mod bilibili;
 pub mod commands;
+pub mod codex;
 pub mod connection_test;
 pub mod error;
+pub mod generation;
 pub mod llm;
 pub mod notification;
 pub mod retry;
@@ -71,6 +73,8 @@ pub fn run() {
             commands::cancel_task,
             commands::verify_sessdata,
             commands::test_llm_connection,
+            commands::supports_codex,
+            commands::test_codex_connection,
             commands::test_asr_connection,
             commands::qrcode_generate,
             commands::qrcode_poll,
