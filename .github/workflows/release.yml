@@ -173,36 +173,22 @@ jobs:
           ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
         shell: bash
         run: |
-          KEYSTORE_PATH="${RUNNER_TEMP}/binote-release.keystore"
-          if [ -n "$ANDROID_KEYSTORE_BASE64" ]; then
-            echo "::notice::Using release keystore from secrets"
-            echo "$ANDROID_KEYSTORE_BASE64" | base64 -d > "$KEYSTORE_PATH"
-            ALIAS="${ANDROID_KEY_ALIAS}"
-            STORE_PASS="${ANDROID_KEYSTORE_PASSWORD}"
-            KEY_PASS="${ANDROID_KEY_PASSWORD}"
-            echo "kind=release" >> "$GITHUB_OUTPUT"
-          else
-            echo "::warning::No ANDROID_KEYSTORE_BASE64 secret found, generating ephemeral debug keystore"
-            keytool -genkeypair -v \
-              -keystore "$KEYSTORE_PATH" \
-              -alias binote-ci \
-              -keyalg RSA -keysize 2048 -validity 10000 \
-              -storepass android -keypass android \
-              -dname "CN=BiNote CI, OU=BiNote, O=BiNote, L=NA, ST=NA, C=NA"
-            ALIAS="binote-ci"
-            STORE_PASS="android"
-            KEY_PASS="android"
-            echo "kind=debug" >> "$GITHUB_OUTPUT"
+          set -euo pipefail
+          if [ -z "$ANDROID_KEYSTORE_BASE64" ] || [ -z "$ANDROID_KEYSTORE_PASSWORD" ] || \
+             [ -z "$ANDROID_KEY_ALIAS" ] || [ -z "$ANDROID_KEY_PASSWORD" ]; then
+            echo "::error::Original Android signing configuration is required. Refusing to generate a replacement key."
+            exit 1
           fi
+          umask 077
+          KEYSTORE_PATH="${RUNNER_TEMP}/binote-release.keystore"
+          printf '%s' "$ANDROID_KEYSTORE_BASE64" | base64 -d > "$KEYSTORE_PATH"
           echo "path=$KEYSTORE_PATH" >> "$GITHUB_OUTPUT"
-          echo "alias=$ALIAS" >> "$GITHUB_OUTPUT"
-          echo "::add-mask::$STORE_PASS"
-          echo "::add-mask::$KEY_PASS"
-          echo "store_pass=$STORE_PASS" >> "$GITHUB_OUTPUT"
-          echo "key_pass=$KEY_PASS" >> "$GITHUB_OUTPUT"
 
       - name: Tauri Android init
         run: npx tauri android init
+
+      - name: Verify signing contract tests
+        run: npm run test:android-signing
 
       - name: Sync custom Android icons
         shell: bash
@@ -225,9 +211,14 @@ jobs:
         run: npx tauri android build --target aarch64 --apk true
 
       - name: Sign and align APK
+        id: sign_apk
+        env:
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
         shell: bash
         run: |
-          set -e
+          set -euo pipefail
           UNSIGNED=$(find src-tauri/gen/android/app/build/outputs/apk -type f -name "*.apk" \
             \( -name "*unsigned*" -o -name "*release*" \) | head -n 1)
           if [ -z "$UNSIGNED" ]; then
@@ -241,16 +232,21 @@ jobs:
           echo "Using build-tools: $BUILD_TOOLS"
 
           ALIGNED="${RUNNER_TEMP}/BiNote-arm64-aligned.apk"
-          SIGNED="${GITHUB_WORKSPACE}/binote/BiNote-arm64-release-signed.apk"
+          VERSION=$(node -p "require('./package.json').version")
+          SIGNED="${GITHUB_WORKSPACE}/binote/BiNote_${VERSION}_arm64.apk"
 
           "$BUILD_TOOLS/zipalign" -f -v -p 4 "$UNSIGNED" "$ALIGNED"
           "$BUILD_TOOLS/apksigner" sign \
             --ks "${{ steps.keystore.outputs.path }}" \
-            --ks-key-alias "${{ steps.keystore.outputs.alias }}" \
-            --ks-pass "pass:${{ steps.keystore.outputs.store_pass }}" \
-            --key-pass "pass:${{ steps.keystore.outputs.key_pass }}" \
+            --ks-key-alias "$ANDROID_KEY_ALIAS" \
+            --ks-pass env:ANDROID_KEYSTORE_PASSWORD \
+            --key-pass env:ANDROID_KEY_PASSWORD \
             --out "$SIGNED" "$ALIGNED"
-          "$BUILD_TOOLS/apksigner" verify --verbose "$SIGNED"
+          # 必须与实际 0.4.1 APK 的证书一致，不能只判断“签名有效”。
+          "$BUILD_TOOLS/apksigner" verify --verbose --print-certs "$SIGNED" \
+            | node scripts/verify-android-signing.cjs
+          "$BUILD_TOOLS/zipalign" -c -p 4 "$SIGNED"
+          echo "apk_path=$SIGNED" >> "$GITHUB_OUTPUT"
 
           ls -lh "$SIGNED"
 
@@ -258,7 +254,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: BiNote-Android
-          path: binote/BiNote-arm64-release-signed.apk
+          path: ${{ steps.sign_apk.outputs.apk_path }}
           if-no-files-found: error
 
   # ───────────────────────────── Release ─────────────────────────────
