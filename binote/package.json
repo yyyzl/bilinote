@@ -1,11 +1,12 @@
 {
   "name": "binote",
-  "version": "0.5.1",
+  "version": "0.5.2",
   "type": "module",
   "scripts": {
     "dev": "vite",
     "build": "tsc && vite build",
     "test:unit": "node scripts/run-unit-tests.cjs",
+    "test:android-signing": "node --test scripts/verify-android-signing.test.cjs",
     "test:ui": "node scripts/verify-ui.cjs && node scripts/verify-flows.cjs && node scripts/verify-interactions.cjs && node scripts/verify-inline-tasks.cjs && node scripts/verify-flat-layout.cjs && node scripts/verify-task-recovery.cjs && node scripts/verify-task-consistency.cjs",
     "tauri": "tauri",
     "desktop:build": "tauri build",

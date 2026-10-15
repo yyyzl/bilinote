@@ -35,6 +35,9 @@ jobs:
       - name: TypeScript + Vite build
         run: npm run build
 
+      - name: Android signing contract tests
+        run: npm run test:android-signing
+
   rust:
     name: Rust (fmt + check)
     runs-on: ubuntu-latest

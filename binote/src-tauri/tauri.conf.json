@@ -1,6 +1,6 @@
 {
   "productName": "BiNote",
-  "version": "0.5.1",
+  "version": "0.5.2",
   "identifier": "com.binote.app",
   "build": {
     "beforeDevCommand": "npm run dev",
