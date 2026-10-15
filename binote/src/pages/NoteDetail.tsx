@@ -4,24 +4,22 @@ import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import {
   ArrowLeft,
-  BrainCircuit,
   CalendarDays,
   CircleHelp,
   ExternalLink,
   FileText,
-  Link as LinkIcon,
   Loader2,
-  Network,
   RefreshCw,
-  ScrollText,
-  Sparkles,
 } from "lucide-react";
+import AppLayout from "../components/AppLayout";
+import LoadingState, { LoadFailure } from "../components/LoadingState";
+import PendingNotice from "../components/PendingNotice";
 import * as api from "../lib/tauri";
 import ErrorModal, { formatError } from "../components/ErrorModal";
 import MermaidRenderer from "../components/MermaidRenderer";
 import CopyButton from "../components/CopyButton";
 
-type TabType = "summary" | "mindmap";
+type TabType = "summary" | "mindmap" | "transcript";
 type GenerateType = "summary" | "mindmap";
 
 const GENERATE_CONFIG = {
@@ -39,21 +37,18 @@ const POLL_INTERVAL_MS = 2000;
 
 const TRANSCRIPT_SOURCE_META = {
   subtitle: {
-    label: "字幕",
+    label: "官方字幕",
     className: "border-sage-200 bg-sage-100/70 text-sage-700",
   },
   asr: {
-    label: "ASR",
+    label: "语音转写",
     className: "border-primary-200 bg-primary-50 text-primary-700",
   },
   mixed: {
-    label: "混合",
+    label: "混合来源",
     className: "border-gold-300 bg-gold-100/80 text-[#8e6532]",
   },
 } as const;
-
-const SUMMARY_PROSE =
-  "prose prose-lg max-w-none prose-headings:font-display prose-headings:text-ink-900 prose-h2:text-[2rem] prose-h2:leading-tight prose-h2:tracking-[-0.03em] prose-h3:text-[1.4rem] prose-h3:leading-snug prose-p:text-ink-600 prose-p:leading-8 prose-strong:text-ink-900 prose-strong:font-semibold prose-a:text-primary-600 prose-ul:text-ink-600 prose-ol:text-ink-600 prose-li:marker:text-primary-400 prose-blockquote:border-l-primary-400 prose-blockquote:bg-primary-50/40 prose-blockquote:py-3 prose-blockquote:px-5 prose-blockquote:text-ink-600 prose-pre:bg-canvas-100 prose-code:text-primary-700";
 
 function formatCreatedDate(timestamp: number): string {
   return new Date(timestamp * 1000).toLocaleDateString("zh-CN", {
@@ -64,7 +59,9 @@ function formatCreatedDate(timestamp: number): string {
 }
 
 function getNoteSourceInput(note: api.Note): string {
-  return note.source_url?.trim() || `https://www.bilibili.com/video/${note.bvid}`;
+  return (
+    note.source_url?.trim() || `https://www.bilibili.com/video/${note.bvid}`
+  );
 }
 
 function getOpenableSourceUrl(note: api.Note): string {
@@ -83,7 +80,21 @@ export default function NoteDetail() {
   const [summaryProgress, setSummaryProgress] = useState("");
   const [mindmapProgress, setMindmapProgress] = useState("");
   const [error, setError] = useState("");
-  const [expanded, setExpanded] = useState(false);
+  const [loaded, setLoaded] = useState(false);
+  const [loadError, setLoadError] = useState("");
+  const [recoveredNoteId, setRecoveredNoteId] = useState<string | null>(null);
+  const [taskRecoveryError, setTaskRecoveryError] = useState("");
+  const [taskRecoveryAttempt, setTaskRecoveryAttempt] = useState(0);
+  const generationLockRef = useRef(new Set<GenerateType>());
+  const pollBusyRef = useRef({ summary: false, mindmap: false });
+  const [generationNotice, setGenerationNotice] = useState({
+    summary: "",
+    mindmap: "",
+  });
+  const [generationStarted, setGenerationStarted] = useState<
+    Partial<Record<GenerateType, number>>
+  >({});
+  const [cancelling, setCancelling] = useState<GenerateType | null>(null);
   const [showTranscriptReason, setShowTranscriptReason] = useState(false);
 
   const summaryPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -92,6 +103,7 @@ export default function NoteDetail() {
   const summaryTaskIdRef = useRef<string | null>(null);
   const mindmapTaskIdRef = useRef<string | null>(null);
   const isMountedRef = useRef(true);
+  const routeVersionRef = useRef(0);
   const transcriptReasonRef = useRef<HTMLDivElement>(null);
 
   const clearPoll = useCallback((type: GenerateType) => {
@@ -102,45 +114,61 @@ export default function NoteDetail() {
     }
   }, []);
 
-  const loadNote = useCallback(
-    async (noteId: string) => {
-      try {
-        const data = await api.getNote(noteId);
-        if (isMountedRef.current) {
-          setNote(data);
-        }
-      } catch (e) {
-        if (isMountedRef.current) {
-          setError(formatError(e));
-        }
+  const loadNote = useCallback(async (noteId: string) => {
+    const version = routeVersionRef.current;
+    try {
+      const data = await api.getNote(noteId);
+      if (isMountedRef.current && version === routeVersionRef.current) {
+        setNote(data);
+        setLoaded(true);
       }
-    },
-    []
-  );
+    } catch (e) {
+      if (isMountedRef.current && version === routeVersionRef.current) {
+        setLoadError(formatError(e));
+        setLoaded(true);
+      }
+    }
+  }, []);
 
   useEffect(() => {
     isMountedRef.current = true;
+    setLoaded(false);
+    setLoadError("");
+    generationLockRef.current.clear();
+    setGenerationNotice({ summary: "", mindmap: "" });
+    setCancelling(null);
+    setNote(null);
+    setSummaryLoading(false);
+    setMindmapLoading(false);
+    summaryTaskIdRef.current = null;
+    mindmapTaskIdRef.current = null;
     if (id) {
       void loadNote(id);
     }
 
     let cleanup: (() => void) | undefined;
-    api.onProgress((taskId, message) => {
-      if (!isMountedRef.current) return;
-      // 按 task_id 匹配本页当前任务的进度（含被接管的转录自动生成阶段），
-      // 忽略其它笔记的并发任务事件。转录任务可同时驱动总结和导图两侧。
-      if (taskId === summaryTaskIdRef.current) {
-        setSummaryProgress(message);
-      }
-      if (taskId === mindmapTaskIdRef.current) {
-        setMindmapProgress(message);
-      }
-    }).then((fn) => {
-      cleanup = fn;
-    });
+    let listenerCancelled = false;
+    api
+      .onProgress((taskId, message) => {
+        if (!isMountedRef.current) return;
+        // 按 task_id 匹配本页当前任务的进度（含被接管的转录自动生成阶段），
+        // 忽略其它笔记的并发任务事件。转录任务可同时驱动总结和导图两侧。
+        if (taskId === summaryTaskIdRef.current) {
+          setSummaryProgress(message);
+        }
+        if (taskId === mindmapTaskIdRef.current) {
+          setMindmapProgress(message);
+        }
+      })
+      .then((fn) => {
+        if (listenerCancelled) fn();
+        else cleanup = fn;
+      });
 
     return () => {
       isMountedRef.current = false;
+      routeVersionRef.current += 1;
+      listenerCancelled = true;
       cleanup?.();
       clearPoll("summary");
       clearPoll("mindmap");
@@ -156,7 +184,10 @@ export default function NoteDetail() {
 
     const handlePointerDown = (event: MouseEvent | TouchEvent) => {
       const target = event.target;
-      if (target instanceof Node && !transcriptReasonRef.current?.contains(target)) {
+      if (
+        target instanceof Node &&
+        !transcriptReasonRef.current?.contains(target)
+      ) {
         setShowTranscriptReason(false);
       }
     };
@@ -174,24 +205,31 @@ export default function NoteDetail() {
   // 任务既可以是本页刚启动的，也可以是页面重建后从后端任务列表里恢复的。
   const watchTask = useCallback(
     (type: GenerateType, taskId: string) => {
+      const version = routeVersionRef.current;
+      const isCurrent = () =>
+        isMountedRef.current && version === routeVersionRef.current;
       const config = GENERATE_CONFIG[type];
-      const setLoading = type === "summary" ? setSummaryLoading : setMindmapLoading;
-      const setProgress = type === "summary" ? setSummaryProgress : setMindmapProgress;
+      const setLoading =
+        type === "summary" ? setSummaryLoading : setMindmapLoading;
+      const setProgress =
+        type === "summary" ? setSummaryProgress : setMindmapProgress;
       const pollRef = type === "summary" ? summaryPollRef : mindmapPollRef;
-      const taskIdRef = type === "summary" ? summaryTaskIdRef : mindmapTaskIdRef;
+      const taskIdRef =
+        type === "summary" ? summaryTaskIdRef : mindmapTaskIdRef;
 
+      generationLockRef.current.add(type);
+      setGenerationStarted((previous) =>
+        previous[type] ? previous : { ...previous, [type]: Date.now() },
+      );
       taskIdRef.current = taskId;
       clearPoll(type);
 
       pollRef.current = setInterval(async () => {
-        if (!isMountedRef.current) {
-          clearPoll(type);
-          return;
-        }
-
+        if (!isCurrent() || pollBusyRef.current[type]) return;
+        pollBusyRef.current[type] = true;
         try {
           const taskInfo = await api.getTaskStatus(taskId);
-          if (!isMountedRef.current) return;
+          if (!isCurrent()) return;
 
           setProgress(taskInfo.progress);
 
@@ -200,41 +238,81 @@ export default function NoteDetail() {
             taskIdRef.current = null;
             if (taskInfo.note_id) {
               const updated = await api.getNote(taskInfo.note_id);
-              if (updated && isMountedRef.current) {
-                setNote(updated);
+              if (updated && isCurrent()) {
+                // 每个生成任务只更新自己的产物，避免迟到的整条快照回滚并行结果。
+                setNote((current) =>
+                  current?.id === updated.id
+                    ? {
+                        ...current,
+                        ...(type === "summary"
+                          ? {
+                              summary: updated.summary,
+                              preview: updated.preview,
+                            }
+                          : { mindmap: updated.mindmap }),
+                      }
+                    : current,
+                );
               }
             }
-            if (isMountedRef.current) {
+            if (isCurrent()) {
+              generationLockRef.current.delete(type);
+              setCancelling(null);
+              setGenerationNotice((previous) => ({
+                ...previous,
+                [type]: type === "summary" ? "总结已更新" : "导图已更新",
+              }));
               setLoading(false);
             }
-          } else if (taskInfo.status === "failed" || taskInfo.status === "cancelled") {
+          } else if (
+            taskInfo.status === "failed" ||
+            taskInfo.status === "cancelled"
+          ) {
             clearPoll(type);
             taskIdRef.current = null;
-            if (isMountedRef.current) {
-              setError(taskInfo.error || config.defaultError);
+            if (isCurrent()) {
+              generationLockRef.current.delete(type);
+              setCancelling(null);
+              if (taskInfo.status === "cancelled")
+                setGenerationNotice((previous) => ({
+                  ...previous,
+                  [type]: "已取消生成，原有内容已保留",
+                }));
+              else setError(taskInfo.error || config.defaultError);
               setLoading(false);
             }
           }
         } catch (e) {
+          if (!isCurrent()) return;
           clearPoll(type);
           taskIdRef.current = null;
           if (isMountedRef.current) {
+            generationLockRef.current.delete(type);
+            setCancelling(null);
             setError(formatError(e));
             setLoading(false);
           }
+        } finally {
+          pollBusyRef.current[type] = false;
         }
       }, POLL_INTERVAL_MS);
     },
-    [clearPoll]
+    [clearPoll],
   );
 
   const handleGenerate = useCallback(
     async (type: GenerateType) => {
-      if (!id) return;
-
+      if (!id || recoveredNoteId !== id || generationLockRef.current.has(type))
+        return;
+      generationLockRef.current.add(type);
+      const version = routeVersionRef.current;
+      setGenerationNotice((previous) => ({ ...previous, [type]: "" }));
+      setGenerationStarted((previous) => ({ ...previous, [type]: Date.now() }));
       const config = GENERATE_CONFIG[type];
-      const setLoading = type === "summary" ? setSummaryLoading : setMindmapLoading;
-      const setProgress = type === "summary" ? setSummaryProgress : setMindmapProgress;
+      const setLoading =
+        type === "summary" ? setSummaryLoading : setMindmapLoading;
+      const setProgress =
+        type === "summary" ? setSummaryProgress : setMindmapProgress;
 
       setLoading(true);
       setActiveTab(type);
@@ -242,15 +320,18 @@ export default function NoteDetail() {
 
       try {
         const taskId = await config.startApi(id);
+        if (!isMountedRef.current || version !== routeVersionRef.current)
+          return;
         watchTask(type, taskId);
       } catch (e) {
-        if (isMountedRef.current) {
+        if (isMountedRef.current && version === routeVersionRef.current) {
+          generationLockRef.current.delete(type);
           setError(formatError(e));
           setLoading(false);
         }
       }
     },
-    [id, watchTask]
+    [id, recoveredNoteId, watchTask],
   );
 
   // 页面打开时检查后端是否已有针对本笔记的进行中任务：别处启动的总结/导图任务，
@@ -259,20 +340,29 @@ export default function NoteDetail() {
   useEffect(() => {
     if (!id) return;
     let cancelled = false;
+    setRecoveredNoteId(null);
+    setTaskRecoveryError("");
 
     void (async () => {
       try {
-        const [entries, config] = await Promise.all([api.listTasks(), api.getConfig()]);
+        const [entries, config] = await Promise.all([
+          api.listTasks(),
+          api.getConfig(),
+        ]);
         if (cancelled || !isMountedRef.current) return;
 
         const actives = entries.filter(
-          (e) => e.note_id === id && (e.status === "queued" || e.status === "running")
+          (e) =>
+            e.note_id === id &&
+            (e.status === "queued" || e.status === "running"),
         );
         for (const e of actives) {
           const adoptSummary =
-            e.kind === "summarize" || (e.kind === "transcribe" && config.auto_summary);
+            e.kind === "summarize" ||
+            (e.kind === "transcribe" && config.auto_summary);
           const adoptMindmap =
-            e.kind === "mindmap" || (e.kind === "transcribe" && config.auto_mindmap);
+            e.kind === "mindmap" ||
+            (e.kind === "transcribe" && config.auto_mindmap);
 
           if (adoptSummary && !summaryTaskIdRef.current) {
             setSummaryLoading(true);
@@ -285,15 +375,17 @@ export default function NoteDetail() {
             watchTask("mindmap", e.task_id);
           }
         }
+        setRecoveredNoteId(id);
       } catch (e) {
-        console.error(e);
+        if (!cancelled && isMountedRef.current)
+          setTaskRecoveryError(formatError(e));
       }
     })();
 
     return () => {
       cancelled = true;
     };
-  }, [id, watchTask]);
+  }, [id, watchTask, taskRecoveryAttempt]);
 
   const handleSummarize = useCallback(() => {
     void handleGenerate("summary");
@@ -303,327 +395,414 @@ export default function NoteDetail() {
     void handleGenerate("mindmap");
   }, [handleGenerate]);
 
-  const isLoading = summaryLoading || mindmapLoading;
-  const currentProgress = activeTab === "summary" ? summaryProgress : mindmapProgress;
-  const hasCurrentContent = activeTab === "summary" ? !!note?.summary : !!note?.mindmap;
+  const isLoading =
+    activeTab === "summary"
+      ? summaryLoading
+      : activeTab === "mindmap"
+        ? mindmapLoading
+        : false;
+  const currentProgress =
+    activeTab === "summary" ? summaryProgress : mindmapProgress;
 
-  if (!note) {
+  const cancelGeneration = async (type: GenerateType) => {
+    const taskId =
+      type === "summary" ? summaryTaskIdRef.current : mindmapTaskIdRef.current;
+    if (!taskId || cancelling) return;
+    const version = routeVersionRef.current;
+    setCancelling(type);
+    try {
+      await api.cancelTask(taskId);
+    } catch (e) {
+      if (isMountedRef.current && version === routeVersionRef.current) {
+        setCancelling(null);
+        setError(formatError(e));
+      }
+    }
+  };
+
+  if (!note || note.id !== id) {
+    const waiting = !loaded || Boolean(note && note.id !== id);
     return (
-      <div className="app-shell">
-        <div className="page-shell flex min-h-screen items-center justify-center">
-          <div className="editorial-card flex w-full max-w-lg flex-col items-center px-6 py-12 text-center">
-            <div className="flex h-14 w-14 items-center justify-center rounded-full border border-primary-200 bg-primary-50 text-primary-600">
-              <Loader2 size={24} className="animate-spin" />
-            </div>
-            <p className="mt-6 font-display text-2xl font-semibold text-ink-900">正在加载笔记</p>
-            <p className="mt-3 text-sm leading-7 text-ink-500">稍等一下，我们正在准备这份内容的阅读视图。</p>
+      <AppLayout reader>
+        <Link to="/" className="back-line">
+          <ArrowLeft size={18} />
+          返回笔记库
+        </Link>
+        {waiting ? (
+          <LoadingState kind="reader" />
+        ) : (
+          <div className="panel">
+            <LoadFailure
+              title={loadError ? "笔记暂时无法读取" : "笔记不存在或无法加载"}
+              message={
+                loadError
+                  ? "读取没有完成，请重试。也可以返回笔记库。"
+                  : "可以返回笔记库，重新打开这篇笔记。"
+              }
+              retryLabel="重新加载笔记"
+              onRetry={() => {
+                if (id) {
+                  setLoaded(false);
+                  setLoadError("");
+                  void loadNote(id);
+                }
+              }}
+            />
           </div>
-        </div>
-        <ErrorModal error={error} onClose={() => setError("")} />
-      </div>
+        )}
+      </AppLayout>
     );
   }
 
   const transcriptSourceMeta = note.transcript_source
-    ? TRANSCRIPT_SOURCE_META[note.transcript_source as keyof typeof TRANSCRIPT_SOURCE_META]
+    ? TRANSCRIPT_SOURCE_META[
+        note.transcript_source as keyof typeof TRANSCRIPT_SOURCE_META
+      ]
     : null;
-  const transcriptReasonTitle =
-    note.transcript_source === "mixed" ? "部分内容为什么用了 ASR" : "为什么没有走原生字幕";
   const sourceInput = getNoteSourceInput(note);
   const openableSourceUrl = getOpenableSourceUrl(note);
+  const content =
+    activeTab === "transcript"
+      ? note.transcript
+      : activeTab === "summary"
+        ? note.summary
+        : note.mindmap;
+  const tabLabel =
+    activeTab === "summary"
+      ? "AI 总结"
+      : activeTab === "transcript"
+        ? "原始转录"
+        : "思维导图";
+  const headings = (note.summary ?? "").split("\n").flatMap((line, index) => {
+    const match = /^#{1,3}\s+(.+)$/.exec(line);
+    return match
+      ? [{ line: index + 1, text: match[1].replace(/[*_`]/g, "") }]
+      : [];
+  });
+  const actions = (
+    <>
+      {content && (
+        <CopyButton
+          text={content}
+          label={
+            activeTab === "transcript"
+              ? "复制原文"
+              : activeTab === "summary"
+                ? "复制总结"
+                : "复制导图源码"
+          }
+        />
+      )}
+      {activeTab !== "transcript" && (
+        <button
+          className="button-secondary"
+          disabled={isLoading || recoveredNoteId !== id}
+          onClick={activeTab === "summary" ? handleSummarize : handleMindmap}
+        >
+          {isLoading ? (
+            <Loader2 size={16} className="animate-spin" />
+          ) : (
+            <RefreshCw size={16} />
+          )}
+          {isLoading ? "生成中" : content ? "重新生成" : "立即生成"}
+        </button>
+      )}
+    </>
+  );
 
   return (
-    <div className="app-shell">
-      <header className="floating-topbar">
-        <div className="topbar-inner">
-          <Link to="/" className="button-secondary min-h-11 !px-4" aria-label="返回首页">
-            <ArrowLeft size={18} />
-            <span className="hidden sm:inline">返回</span>
-          </Link>
-
-          <div className="min-w-0 flex-1">
-            <p className="editorial-kicker">Note Reader</p>
-            <h1 className="truncate font-display text-2xl font-semibold leading-tight text-ink-900">
-              {note.title}
-            </h1>
-          </div>
-
-          <div className="editorial-chip hidden sm:inline-flex">{note.bvid}</div>
-        </div>
-      </header>
-
-      <main className="page-shell mt-header-offset pt-6 sm:pt-8">
-        <section className="hero-panel overflow-hidden">
-            <div className="space-y-8 p-6 sm:p-8 lg:p-10">
-              <div className="space-y-4">
-                <div className="flex flex-wrap items-center gap-2">
-                  <div className="editorial-chip">
-                    <Sparkles size={14} />
-                    Reading Workspace
-                  </div>
-                  {transcriptSourceMeta && (
-                    <div ref={transcriptReasonRef} className="relative">
-                      <button
-                        type="button"
-                        onClick={() => {
-                          if (note.transcript_reason) {
-                            setShowTranscriptReason((previous) => !previous);
-                          }
-                        }}
-                        className={`inline-flex items-center gap-1 rounded-full border px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.18em] ${transcriptSourceMeta.className} ${
-                          note.transcript_reason ? "cursor-pointer" : "cursor-default"
-                        }`}
-                        aria-label={
-                          note.transcript_reason
-                            ? `${transcriptSourceMeta.label}，查看原因说明`
-                            : transcriptSourceMeta.label
-                        }
-                        aria-expanded={note.transcript_reason ? showTranscriptReason : undefined}
-                      >
-                        <span>{transcriptSourceMeta.label}</span>
-                        {note.transcript_reason && <CircleHelp size={12} />}
-                      </button>
-
-                      {note.transcript_reason && (
-                        <div
-                          className={`absolute left-0 top-full z-20 mt-2 w-72 rounded-[24px] border border-ink-100 bg-ink-900 px-4 py-3 text-left text-xs leading-6 text-canvas-50 shadow-soft transition-all ${
-                            showTranscriptReason
-                              ? "pointer-events-auto translate-y-0 opacity-100"
-                              : "pointer-events-none -translate-y-1 opacity-0"
-                          }`}
-                        >
-                          <p className="font-semibold text-white">{transcriptReasonTitle}</p>
-                          <p className="mt-1 whitespace-pre-wrap text-canvas-100">{note.transcript_reason}</p>
-                        </div>
-                      )}
-                    </div>
-                  )}
-                </div>
-
-                <div className="space-y-4">
-                  <p className="editorial-kicker">Bilibili Archive</p>
-                  <h2 className="title-display max-w-3xl">{note.title}</h2>
-                  <div className="flex max-w-3xl flex-col gap-3 rounded-[24px] border border-ink-100/80 bg-paper-50/[0.72] px-4 py-3 shadow-inset sm:flex-row sm:items-center sm:justify-between">
-                    <div className="flex min-w-0 items-center gap-2 text-sm text-ink-500">
-                      <LinkIcon size={15} className="shrink-0 text-primary-600" />
-                      <span className="shrink-0 font-semibold text-ink-700">原始链接</span>
-                      <span className="truncate" title={sourceInput}>
-                        {sourceInput}
-                      </span>
-                    </div>
-                    <div className="flex shrink-0 items-center gap-2">
-                      <CopyButton
-                        text={sourceInput}
-                        label="复制链接"
-                        successLabel="已复制"
-                        className="button-secondary min-h-9 !px-3 !py-2 text-xs"
-                        size={14}
-                      />
-                      <a
-                        href={openableSourceUrl}
-                        target="_blank"
-                        rel="noreferrer"
-                        title={sourceInput}
-                        className="button-tertiary min-h-9 !px-3 !py-2 text-xs"
-                      >
-                        <ExternalLink size={14} />
-                        打开
-                      </a>
-                    </div>
-                  </div>
-                </div>
-              </div>
-
-              <div className="flex flex-wrap items-center gap-3 text-sm text-ink-500">
-                <span className="inline-flex items-center gap-1.5">
-                  <CalendarDays size={14} className="text-primary-600" />
-                  {formatCreatedDate(note.created_at)}
-                </span>
-                <span className="text-ink-200">·</span>
-                <span>AI 总结 {note.summary ? <span className="font-semibold text-sage-700">已生成</span> : <span className="text-ink-400">待生成</span>}</span>
-                <span className="text-ink-200">·</span>
-                <span>思维导图 {note.mindmap ? <span className="font-semibold text-sage-700">已生成</span> : <span className="text-ink-400">待生成</span>}</span>
-              </div>
-            </div>
-        </section>
-
-        <section className="mt-8 grid gap-8 xl:grid-cols-[1.08fr_0.92fr]">
-          <div className="editorial-card p-5 sm:p-6 lg:p-8">
-            <div className="flex flex-col gap-5 border-b border-ink-100 pb-6 sm:flex-row sm:items-start sm:justify-between">
-              <div className="space-y-3">
-                <p className="editorial-kicker">AI Workspace</p>
-                <div className="flex flex-wrap items-center gap-2 rounded-full border border-ink-100 bg-white/70 p-1">
-                  <button
-                    onClick={() => setActiveTab("summary")}
-                    className={`inline-flex min-h-11 items-center justify-center gap-2 rounded-full px-4 py-3 text-sm font-semibold transition-all duration-200 ${
-                      activeTab === "summary"
-                        ? "bg-primary-500 text-white shadow-[0_12px_24px_-18px_rgba(183,93,62,0.72)]"
-                        : "text-ink-500 hover:bg-white hover:text-ink-700"
-                    }`}
-                  >
-                    <BrainCircuit size={16} />
-                    AI 总结
-                  </button>
-                  <button
-                    onClick={() => setActiveTab("mindmap")}
-                    className={`inline-flex min-h-11 items-center justify-center gap-2 rounded-full px-4 py-3 text-sm font-semibold transition-all duration-200 ${
-                      activeTab === "mindmap"
-                        ? "bg-primary-500 text-white shadow-[0_12px_24px_-18px_rgba(183,93,62,0.72)]"
-                        : "text-ink-500 hover:bg-white hover:text-ink-700"
-                    }`}
-                  >
-                    <Network size={16} />
-                    思维导图
-                  </button>
-                </div>
-              </div>
-
-              <div className="flex flex-wrap items-center gap-2">
-                {isLoading && (
-                  <div className="editorial-chip border-primary-200 bg-primary-50 text-primary-600">
-                    <Loader2 size={14} className="animate-spin" />
-                    {currentProgress || "生成中..."}
-                  </div>
-                )}
-                {!isLoading && activeTab === "summary" && note.summary && (
-                  <CopyButton text={note.summary} label="复制总结" />
-                )}
-                {!isLoading && hasCurrentContent && (
-                  <button
-                    onClick={activeTab === "summary" ? handleSummarize : handleMindmap}
-                    className="button-secondary"
-                    title={activeTab === "summary" ? "重新生成总结" : "重新生成思维导图"}
-                  >
-                    <RefreshCw size={16} />
-                    重新生成
-                  </button>
-                )}
-              </div>
-            </div>
-
-            <div className="pt-8">
-              {activeTab === "summary" && (
-                <>
-                  {note.summary ? (
-                    <article className={SUMMARY_PROSE}>
-                      <ReactMarkdown remarkPlugins={[remarkGfm]}>{note.summary}</ReactMarkdown>
-                    </article>
-                  ) : (
-                    <div className="flex min-h-[320px] flex-col items-center justify-center rounded-[28px] border border-dashed border-ink-200 bg-canvas-100/50 px-6 py-12 text-center">
-                      {summaryLoading ? (
-                        <>
-                          <div className="flex h-14 w-14 items-center justify-center rounded-full border border-primary-200 bg-primary-50 text-primary-600">
-                            <Loader2 size={24} className="animate-spin" />
-                          </div>
-                          <p className="mt-5 font-display text-2xl font-semibold text-ink-900">正在生成 AI 总结</p>
-                          <p className="mt-3 text-sm leading-7 text-ink-500">{summaryProgress || "请稍候"}</p>
-                        </>
-                      ) : (
-                        <>
-                          <div className="flex h-14 w-14 items-center justify-center rounded-full border border-ink-100 bg-white/80 text-ink-500">
-                            <BrainCircuit size={24} />
-                          </div>
-                          <p className="mt-5 font-display text-2xl font-semibold text-ink-900">还没有总结</p>
-                          <p className="mt-3 max-w-md text-sm leading-7 text-ink-500">
-                            一键生成后，会把视频内容提炼成更适合快速回看和整理的摘要结构。
-                          </p>
-                          <button onClick={handleSummarize} className="button-primary mt-6">
-                            <BrainCircuit size={16} />
-                            生成 AI 总结
-                          </button>
-                        </>
-                      )}
-                    </div>
-                  )}
-                </>
-              )}
-
-              {activeTab === "mindmap" && (
-                <>
-                  {note.mindmap ? (
-                    <MermaidRenderer code={note.mindmap} onRegenerate={handleMindmap} />
-                  ) : (
-                    <div className="flex min-h-[320px] flex-col items-center justify-center rounded-[28px] border border-dashed border-ink-200 bg-canvas-100/50 px-6 py-12 text-center">
-                      {mindmapLoading ? (
-                        <>
-                          <div className="flex h-14 w-14 items-center justify-center rounded-full border border-primary-200 bg-primary-50 text-primary-600">
-                            <Loader2 size={24} className="animate-spin" />
-                          </div>
-                          <p className="mt-5 font-display text-2xl font-semibold text-ink-900">正在生成思维导图</p>
-                          <p className="mt-3 text-sm leading-7 text-ink-500">{mindmapProgress || "请稍候"}</p>
-                        </>
-                      ) : (
-                        <>
-                          <div className="flex h-14 w-14 items-center justify-center rounded-full border border-ink-100 bg-white/80 text-ink-500">
-                            <Network size={24} />
-                          </div>
-                          <p className="mt-5 font-display text-2xl font-semibold text-ink-900">还没有思维导图</p>
-                          <p className="mt-3 max-w-md text-sm leading-7 text-ink-500">
-                            生成后会用结构化节点串联视频的主线和重点，方便快速扫描。
-                          </p>
-                          <button onClick={handleMindmap} className="button-primary mt-6">
-                            <Network size={16} />
-                            生成思维导图
-                          </button>
-                        </>
-                      )}
-                    </div>
-                  )}
-                </>
-              )}
-            </div>
-          </div>
-
-          <div className="editorial-card p-5 sm:p-6 lg:p-8">
-            <div className="flex items-start justify-between gap-4">
-              <div>
-                <p className="editorial-kicker">Transcript Archive</p>
-                <h3 className="section-display mt-2">完整转录</h3>
-                <p className="mt-2 text-sm leading-7 text-ink-500">
-                  保留完整原文，方便你核对细节、复制片段或继续整理。
-                </p>
-              </div>
-
-              <div className="flex flex-wrap items-center gap-2">
-                <CopyButton text={note.transcript} label="复制原文" />
-                <button onClick={() => setExpanded((previous) => !previous)} className="button-secondary">
-                  <ScrollText size={16} />
-                  {expanded ? "收起" : "展开"}
-                </button>
-              </div>
-            </div>
-
-            <div className="mt-6 rounded-[28px] border border-ink-100/80 bg-canvas-100/50 p-4 sm:p-5">
-              <div className="mb-4 flex flex-wrap items-center gap-2">
-                <div className="editorial-chip">
-                  <FileText size={14} />
-                  Transcript
-                </div>
-                {transcriptSourceMeta && (
-                  <div className={`inline-flex items-center rounded-full border px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.18em] ${transcriptSourceMeta.className}`}>
-                    {transcriptSourceMeta.label}
-                  </div>
-                )}
-              </div>
-
-              <div className="relative">
-                <div
-                  className={`rounded-[24px] border border-white/80 bg-paper-50/[0.88] p-4 font-mono text-sm leading-8 text-ink-600 transition-all ${
-                    expanded ? "" : "max-h-[360px] overflow-hidden"
-                  }`}
+    <AppLayout reader>
+      <Link to="/" className="back-line">
+        <ArrowLeft size={19} />
+        返回笔记库
+      </Link>
+      <header className="note-heading">
+        <div className="min-w-0">
+          <h1>{note.title}</h1>
+          <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-2 text-sm text-ink-400">
+            <span>B站视频</span>
+            <span>·</span>
+            <time>{formatCreatedDate(note.created_at)}</time>
+            {transcriptSourceMeta && (
+              <div className="relative" ref={transcriptReasonRef}>
+                <button
+                  className="inline-flex items-center gap-1 rounded bg-canvas-100 px-2 py-0.5 text-xs text-ink-500"
+                  disabled={!note.transcript_reason}
+                  aria-expanded={showTranscriptReason}
+                  onClick={() => setShowTranscriptReason((value) => !value)}
                 >
-                  {note.transcript}
-                </div>
-                {!expanded && (
-                  <div className="pointer-events-none absolute inset-x-0 bottom-0 h-24 rounded-b-[24px] bg-gradient-to-t from-paper-50/[0.98] to-transparent" />
+                  {transcriptSourceMeta.label}
+                  {note.transcript_reason && <CircleHelp size={13} />}
+                </button>
+                {showTranscriptReason && note.transcript_reason && (
+                  <div className="absolute left-0 top-full z-10 mt-2 w-60 rounded-lg border border-ink-100 bg-white p-4 text-xs leading-6 text-ink-600 shadow-soft">
+                    {note.transcript_reason}
+                  </div>
                 )}
               </div>
-            </div>
+            )}
           </div>
+        </div>
+        <a
+          href={openableSourceUrl}
+          target="_blank"
+          rel="noreferrer"
+          className="button-secondary"
+        >
+          <ExternalLink size={17} />
+          打开源视频
+        </a>
+      </header>
+      <div className="content-tabs" role="tablist" aria-label="笔记内容">
+        {(
+          [
+            { id: "summary", label: "AI 总结" },
+            { id: "transcript", label: "原始转录" },
+            { id: "mindmap", label: "思维导图" },
+          ] as const
+        ).map((tab) => (
+          <button
+            key={tab.id}
+            id={`tab-${tab.id}`}
+            role="tab"
+            aria-controls="note-content"
+            aria-selected={activeTab === tab.id}
+            className="content-tab"
+            tabIndex={activeTab === tab.id ? 0 : -1}
+            onKeyDown={(event) => {
+              const tabs: TabType[] = ["summary", "transcript", "mindmap"];
+              const index = tabs.indexOf(activeTab);
+              const target =
+                event.key === "ArrowRight"
+                  ? tabs[(index + 1) % tabs.length]
+                  : event.key === "ArrowLeft"
+                    ? tabs[(index + tabs.length - 1) % tabs.length]
+                    : event.key === "Home"
+                      ? tabs[0]
+                      : event.key === "End"
+                        ? tabs[tabs.length - 1]
+                        : null;
+              if (target) {
+                event.preventDefault();
+                setActiveTab(target);
+                document.getElementById(`tab-${target}`)?.focus();
+              }
+            }}
+            onClick={() => setActiveTab(tab.id)}
+          >
+            {tab.label}
+          </button>
+        ))}
+      </div>
+      {taskRecoveryError ? (
+        <LoadFailure
+          title="后台任务暂时无法恢复"
+          message="请重新读取任务状态后再生成，已有内容仍可阅读。"
+          retryLabel="重新读取任务"
+          onRetry={() => setTaskRecoveryAttempt((attempt) => attempt + 1)}
+        />
+      ) : (
+        recoveredNoteId !== id && (
+          <p role="status" className="mb-4 text-sm text-ink-500">
+            正在恢复后台任务，恢复后即可生成新内容。
+          </p>
+        )
+      )}
+      <div className={activeTab === "mindmap" ? "min-w-0" : "reader-layout"}>
+        <section
+          key={activeTab}
+          aria-busy={isLoading}
+          className="reader-panel panel"
+          id="note-content"
+          role="tabpanel"
+          tabIndex={0}
+          aria-labelledby={`tab-${activeTab}`}
+        >
+          <div className="reader-toolbar">
+            <h2>{tabLabel}</h2>
+            <div className="reader-actions flex gap-2">{actions}</div>
+          </div>
+          {isLoading && (
+            <PendingNotice
+              message={(currentProgress || "正在生成，请稍候…").slice(0, 180)}
+              startedAt={
+                activeTab === "summary"
+                  ? generationStarted.summary
+                  : generationStarted.mindmap
+              }
+              onCancel={() =>
+                void cancelGeneration(
+                  activeTab === "summary" ? "summary" : "mindmap",
+                )
+              }
+              cancelling={cancelling !== null}
+            />
+          )}
+          {!isLoading &&
+            activeTab !== "transcript" &&
+            generationNotice[activeTab] && (
+              <p role="status" className="success-notice">
+                {generationNotice[activeTab]}
+              </p>
+            )}
+          {isLoading && !content && (
+            <div aria-hidden="true" className="min-h-[290px] space-y-6 py-7">
+              {["w-1/3", "w-full", "w-5/6", "w-full", "w-2/3"].map(
+                (width, index) => (
+                  <div key={index} className={`skeleton-line ${width}`} />
+                ),
+              )}
+            </div>
+          )}
+          {activeTab === "summary" && note.summary && (
+            <article className="summary-content">
+              <ReactMarkdown
+                remarkPlugins={[remarkGfm]}
+                components={{
+                  h1: ({ node, ...props }) => (
+                    <h2
+                      id={`reader-section-${node?.position?.start.line}`}
+                      {...props}
+                    />
+                  ),
+                  h2: ({ node, ...props }) => (
+                    <h2
+                      id={`reader-section-${node?.position?.start.line}`}
+                      {...props}
+                    />
+                  ),
+                  h3: ({ node, ...props }) => (
+                    <h3
+                      id={`reader-section-${node?.position?.start.line}`}
+                      {...props}
+                    />
+                  ),
+                }}
+              >
+                {note.summary}
+              </ReactMarkdown>
+            </article>
+          )}
+          {activeTab === "transcript" && (
+            <>
+              <p className="mb-6 text-xs text-ink-400">
+                {transcriptSourceMeta?.label ?? "转录文本"} ·{" "}
+                {note.transcript.length.toLocaleString("zh-CN")} 字
+              </p>
+              <div className="transcript-copy">{note.transcript}</div>
+              {note.transcript_reason && (
+                <div className="mt-8 rounded-lg bg-canvas-50 p-4 text-sm leading-7 text-ink-500">
+                  <strong className="font-medium text-ink-700">
+                    转录来源说明
+                  </strong>
+                  <p className="whitespace-pre-wrap">
+                    {note.transcript_reason}
+                  </p>
+                </div>
+              )}
+            </>
+          )}
+          {activeTab === "mindmap" && note.mindmap && (
+            <MermaidRenderer
+              code={note.mindmap}
+              onRegenerate={recoveredNoteId === id ? handleMindmap : undefined}
+            />
+          )}
+          {!content && !isLoading && (
+            <div className="flex min-h-[380px] flex-col items-center justify-center gap-4 text-center">
+              <h3 className="text-2xl font-semibold">
+                {activeTab === "transcript"
+                  ? "暂无转录内容"
+                  : `还没有${tabLabel}`}
+              </h3>
+              <p className="max-w-sm text-sm leading-7 text-ink-500">
+                {activeTab === "transcript"
+                  ? "这篇笔记暂时没有可用的转录文本。"
+                  : "根据已有转录整理内容，生成后可以随时回来阅读。"}
+              </p>
+              {activeTab !== "transcript" && (
+                <button
+                  className="button-primary"
+                  disabled={recoveredNoteId !== id}
+                  onClick={
+                    activeTab === "summary" ? handleSummarize : handleMindmap
+                  }
+                >
+                  生成{tabLabel}
+                </button>
+              )}
+            </div>
+          )}
+          {activeTab !== "transcript" && content && (
+            <p className="mt-8 border-t border-ink-100 pt-4 text-xs text-ink-400">
+              AI 生成内容，建议结合原始转录核对。
+            </p>
+          )}
         </section>
-      </main>
-
+        {activeTab !== "mindmap" && (
+          <aside className="reader-toc panel">
+            {activeTab === "summary" && headings.length > 0 && (
+              <>
+                <h2 className="mb-4 text-xl font-semibold">本页目录</h2>
+                <nav aria-label="本页目录" className="mb-6">
+                  {headings.map((heading) => (
+                    <button
+                      key={heading.line}
+                      className="block w-full border-l-2 border-ink-100 py-2 pl-4 text-left text-sm leading-6 text-ink-500 hover:border-primary-300 hover:text-primary-700"
+                      onClick={() =>
+                        document
+                          .getElementById(`reader-section-${heading.line}`)
+                          ?.scrollIntoView({
+                            behavior: window.matchMedia(
+                              "(prefers-reduced-motion: reduce)",
+                            ).matches
+                              ? "auto"
+                              : "smooth",
+                            block: "start",
+                          })
+                      }
+                    >
+                      {heading.text}
+                    </button>
+                  ))}
+                </nav>
+              </>
+            )}
+            <h3 className="mb-4 text-base font-semibold">笔记信息</h3>
+            <p className="flex items-center gap-2 text-sm text-ink-400">
+              <CalendarDays size={16} />
+              {formatCreatedDate(note.created_at)}
+            </p>
+            <p className="mt-4 flex items-center gap-2 text-sm text-ink-400">
+              <FileText size={16} />
+              {note.transcript.length.toLocaleString("zh-CN")} 字转录
+            </p>
+            <div className="mt-6 border-t border-ink-100 pt-4">
+              <p className="break-all text-xs leading-6 text-ink-400">
+                {sourceInput}
+              </p>
+              <CopyButton
+                text={sourceInput}
+                label="复制链接"
+                className="button-tertiary mt-2 !px-0"
+              />
+            </div>
+          </aside>
+        )}
+      </div>
+      <div className="mobile-reading-actions">
+        {actions}
+        <a
+          href={openableSourceUrl}
+          target="_blank"
+          rel="noreferrer"
+          aria-label="打开源视频"
+          className="icon-button"
+        >
+          <ExternalLink size={19} />
+        </a>
+      </div>
       <ErrorModal error={error} onClose={() => setError("")} />
-    </div>
+    </AppLayout>
   );
 }

@@ -1,6 +1,6 @@
 {
   "productName": "BiNote",
-  "version": "0.4.1",
+  "version": "0.5.0",
   "identifier": "com.binote.app",
   "build": {
     "beforeDevCommand": "npm run dev",
@@ -24,8 +24,8 @@
     "windows": [
       {
         "title": "BiNote",
-        "width": 800,
-        "height": 600,
+        "width": 1280,
+        "height": 900,
         "minWidth": 400,
         "minHeight": 300
       }

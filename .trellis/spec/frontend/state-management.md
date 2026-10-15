@@ -251,3 +251,30 @@ const [input, setInput] = useState("");
 const [notes, setNotes] = useState([]);
 const [loading, setLoading] = useState(false);
 ```
+
+## 通知点击与后台完成状态
+
+任务完成时写入的 `.notification_nav_target` 是 Android 通知点击所需的元数据，不是用户的导航请求。前端不得在启动、路由变化、`focus` 或 `visibilitychange` 时读取它并跳转，否则正常导航会被刚完成的任务抢占。
+
+`MainActivity` 仅在收到通知点击 Intent 后读取该文件，通过 `window.__BINOTE_NOTIFICATION_CLICK__` 发送笔记 ID；前端沿用 `notification-nav.ts` 的就绪缓冲和注册处理器。Windows 不写这份 Android 元数据。回归验证必须同时覆盖“未点击通知保持当前路由”和“真实点击事件打开笔记”。
+
+## 配置读取、登录刷新与保存快照
+
+`Settings.loadConfig(refreshLogin = false)` 同时读取 `get_config` 和 `supports_codex`，成功前不展示可编辑的默认配置，也不允许 `save_config`。读取失败在原位重试。
+
+- `savedConfigRef` 保存服务器基线，`currentConfigRef` 保存当前编辑，`loadRequestRef` 拒绝迟到的读取结果。
+- 有未保存编辑时，只更新尚未编辑的 `bilibili_sessdata`、`bilibili_bili_jct`、`bilibili_refresh_token`、`bilibili_dede_user_id`、`bilibili_cookie_ts`；扫码成功或主动退出传 `true`，以新登录结果替换这些字段，保留其他编辑。
+- 异步合并必须先同步 `currentConfigRef.current`，再调用 `setConfig`。连续的 Promise 返回可能发生在 React 提交之前，不能假定下一次刷新已经读到最新 React state。
+- 保存先同步加锁，再捕获配置快照；完成后基线更新为实际发送的快照。保存中继续编辑时，成功提示不能将后续编辑误标为已保存。
+
+Good：编辑模型 → 扫码刷新账号 → 模型编辑保留，新会话随下次保存；Base：初次读取成功后保存；Bad：读取失败不能保存默认值，迟到读取不能覆盖编辑。对应可执行回归为 `binote/scripts/verify-interactions.cjs` 的配置慢读取、保存中编辑与登录刷新场景。
+
+## 局部展开状态与路由
+
+任务列表的展开/收起使用 Dashboard 的本地 useState；不得写查询参数或改变导航选中项，也不得向浏览历史增加记录。路由只代表笔记库、笔记详情、设置等真正页面。离开库后任务继续运行，返回通过后端注册表恢复任务，列表默认收起。
+
+## 任务恢复与新任务互斥
+
+Dashboard 的 `tasksLoaded && !tasksError` 是创建转录及消费分享队列的前置条件；只禁用按钮不够，handleSubmit/startTranscription 也必须检查。恢复失败保留输入与分享队列，成功重试后再按 bvid 去重和消费。
+
+NoteDetail 用 `recoveredNoteId === id` 确认当前笔记任务恢复成功，接管已有总结/导图/转录后才开放生成。读取失败时保留正文、禁用生成并提供重新读取。该条件同时约束按钮和 handleGenerate；切换笔记不能沿用旧页的就绪状态。对应回归 `scripts/verify-task-recovery.cjs`。

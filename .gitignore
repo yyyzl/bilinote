@@ -3,6 +3,7 @@ node_modules/
 
 # Build outputs
 dist/
+binote/test-results/
 build/
 *.apk
 *.idsig

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Check, Copy } from "lucide-react";
+import { Check, Copy, Loader2, TriangleAlert } from "lucide-react";
 
 interface Props {
   text: string;
@@ -20,6 +20,7 @@ async function writeClipboard(text: string): Promise<void> {
     }
   }
 
+  const previous = document.activeElement;
   const textarea = document.createElement("textarea");
   textarea.value = text;
   textarea.setAttribute("readonly", "");
@@ -30,9 +31,11 @@ async function writeClipboard(text: string): Promise<void> {
   textarea.select();
   textarea.setSelectionRange(0, text.length);
   try {
-    document.execCommand("copy");
+    if (!document.execCommand("copy")) throw new Error("clipboard unavailable");
   } finally {
     document.body.removeChild(textarea);
+    if (previous instanceof HTMLElement && previous.isConnected)
+      previous.focus();
   }
 }
 
@@ -44,11 +47,17 @@ export default function CopyButton({
   size = 16,
   ariaLabel,
 }: Props) {
-  const [copied, setCopied] = useState(false);
+  const [state, setState] = useState<"idle" | "copying" | "copied" | "error">(
+    "idle",
+  );
+  const mountedRef = useRef(true);
+  const pendingRef = useRef(false);
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
+    mountedRef.current = true;
     return () => {
+      mountedRef.current = false;
       if (timerRef.current) {
         clearTimeout(timerRef.current);
       }
@@ -56,14 +65,19 @@ export default function CopyButton({
   }, []);
 
   const handleCopy = useCallback(async () => {
-    if (!text) return;
+    if (!text || pendingRef.current) return;
+    pendingRef.current = true;
+    setState("copying");
+    if (timerRef.current) clearTimeout(timerRef.current);
     try {
       await writeClipboard(text);
-      setCopied(true);
-      if (timerRef.current) clearTimeout(timerRef.current);
-      timerRef.current = setTimeout(() => setCopied(false), 1600);
-    } catch (err) {
-      console.error("Copy failed:", err);
+      if (mountedRef.current) setState("copied");
+    } catch {
+      if (mountedRef.current) setState("error");
+    } finally {
+      pendingRef.current = false;
+      if (mountedRef.current)
+        timerRef.current = setTimeout(() => setState("idle"), 2400);
     }
   }, [text]);
 
@@ -72,11 +86,29 @@ export default function CopyButton({
       type="button"
       onClick={handleCopy}
       className={className}
+      disabled={!text || state === "copying"}
+      aria-busy={state === "copying"}
       aria-label={ariaLabel ?? label}
       title={ariaLabel ?? label}
     >
-      {copied ? <Check size={size} /> : <Copy size={size} />}
-      <span>{copied ? successLabel : label}</span>
+      {state === "copied" ? (
+        <Check size={size} />
+      ) : state === "copying" ? (
+        <Loader2 size={size} className="animate-spin" />
+      ) : state === "error" ? (
+        <TriangleAlert size={size} />
+      ) : (
+        <Copy size={size} />
+      )}
+      <span aria-live="polite">
+        {state === "copied"
+          ? successLabel
+          : state === "error"
+            ? "复制失败，请重试"
+            : state === "copying"
+              ? "正在复制…"
+              : label}
+      </span>
     </button>
   );
 }
