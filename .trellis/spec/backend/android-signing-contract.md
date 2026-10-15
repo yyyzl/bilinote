@@ -7,6 +7,7 @@
 - GitHub Actions 使用原密钥的仓库 Secrets：`ANDROID_KEYSTORE_BASE64`、`ANDROID_KEYSTORE_PASSWORD`、`ANDROID_KEY_ALIAS`、`ANDROID_KEY_PASSWORD`。禁止把私钥、密码或 Base64 内容写入源码、日志、Artifact 或 Release。
 - 任一配置缺失时必须提前失败，禁止临时生成替代密钥继续发布。
 - APK 必须通过 `apksigner verify --verbose --print-certs`，再由 `binote/scripts/verify-android-signing.cjs` 确认单一原证书；不匹配则停止上传与 Release 创建。随后验证 ZIP 对齐。
+- 格式识别必须覆盖 SDK 36 的 `Signer #1` 和 SDK 37 的 `V3.0 Signer:` 等版本化名称。新格式还必须确认 `Number of signers: 1`；任何额外证书、不匹配指纹或未经验证的输出仍拒绝。门禁回归需包含实际工具版本，不能把文本格式变化误判为换钥。
 - 安装包命名 `BiNote_<版本>_arm64.apk`。包名保持 `com.binote.app`，版本号升高；覆盖升级使用安装器更新或 `adb install -r`，不卸载、不清数据。
 - 原签名私钥不得随意轮换。即使新建密钥也“能签名”，证书不同仍不能接续此历史应用的更新。
 
