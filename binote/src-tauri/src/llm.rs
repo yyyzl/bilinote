@@ -402,24 +402,54 @@ impl LlmClient {
 
 pub(crate) fn build_summary_prompt(title: &str, transcript: &str) -> String {
     format!(
-        r#"请为以下 B站视频生成内容总结与列表预览，在同一次回复中返回一个 JSON 对象，不要附加说明或代码围栏。
+        r#"请为以下B站视频生成一份结构化的内容总结笔记。
 
-视频标题：{title}
-转录文本：
-{transcript}
+## 视频标题
+{}
 
+## 转录文本
+{}
+
+---
+
+请按照以下格式输出总结（使用 Markdown 格式）：
+
+### 📋 内容概述
+用2-3句话概括视频的主题和核心内容。
+
+### 🎯 核心要点
+按照视频内容的逻辑顺序，提取3-5个核心要点，每个要点用简洁的语言描述，突出**关键词**。
+
+### 💡 精华金句
+如果视频中有值得记录的精彩表述、观点或金句，提取1-3条（如果没有可以跳过这部分）。
+
+### 📝 详细笔记
+按照视频的主题或时间线分段总结，每段包含：
+- 小标题（描述该段落主题）
+- 具体内容要点
+
+---
+
+要求：
+1. **严格基于转录文本内容进行总结，禁止编造转录中没有的信息**
+2. 如果转录文本与视频标题明显不相关、内容过短或质量不佳，请在开头明确说明"⚠️ 转录内容可能不完整，以下总结仅基于已有文本"
+3. 语言简洁精炼，避免冗余
+4. 突出重点内容，使用 **加粗** 标记关键词
+5. 保持逻辑清晰，层次分明
+6. 如果内容较短，可以适当精简各部分
+
+---
+
+补充输出要求（不改变以上总结正文要求）：
+请在同一次回复中仅返回一个 JSON 对象，不要附加说明或代码围栏。
 JSON 格式：{{"summary":"Markdown 正文", "preview":"纯文本预览"}}
-
-summary 要求：
-- 使用 Markdown 标题组织「内容概述」「核心要点」「详细笔记」，有实际精彩观点时可增加「精华金句」。不要给标题添加装饰图标。
-- 概述用 2–3 句话，核心要点提取 3–5 条；详细笔记按主题或时间线组织，关键词加粗。
-- 严格基于转录，禁止编造。文本过短、不完整或与标题不符时在正文开头明确说明；短内容适当精简。
-
-preview 要求：
+summary 字段完整遵循以上原始总结要求，值为 Markdown 正文。
+preview 字段单独遵循以下要求，不改变 summary 的内容和结构：
 - 约 30–50 个汉字，提炼具体内容、结论或关键洞见，帮助读者区分这条笔记。
 - 不重复标题，不使用「本视频主要介绍」「这是一份关于」等泛化开头，不含 Markdown、换行、图标。
 - 仅基于实际转录；内容不足时如实简短描述，不为凑字数编造。
-JSON 字符串内换行、引号必须正确转义。"#
+JSON 字符串内换行、引号必须正确转义。"#,
+        title, transcript
     )
 }
 
@@ -524,4 +554,42 @@ struct StreamChoice {
 struct StreamDelta {
     #[serde(default)]
     content: Option<String>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::build_summary_prompt;
+
+    #[test]
+    fn summary_prompt_preserves_complete_original_instructions() {
+        // 基线逐字取自 c37425a；使用完整原文防止只保留标题却改写正文要求。
+        let title = "测试视频：\"模型\"与 {提示词}";
+        let transcript = "第一段：实际内容。\n第二段：{summary} 不是格式占位符。";
+        let original = format!(
+            include_str!("testdata/summary_prompt_original.md"),
+            title, transcript
+        );
+        let prompt = build_summary_prompt(title, transcript);
+
+        assert!(
+            prompt.starts_with(original.trim_end_matches('\n')),
+            "完整原始总结要求必须原样保留在提示词开头"
+        );
+    }
+
+    #[test]
+    fn summary_prompt_appends_json_and_independent_preview_requirements() {
+        let prompt = build_summary_prompt("测试视频", "实际内容");
+        let (_, output_rules) = prompt
+            .split_once("补充输出要求（不改变以上总结正文要求）：")
+            .expect("输出包装要求必须在原文之后单独追加");
+
+        assert!(output_rules.contains(r#"{"summary":"Markdown 正文", "preview":"纯文本预览"}"#));
+        assert!(output_rules.contains("summary 字段完整遵循以上原始总结要求"));
+        assert!(output_rules.contains("preview 字段单独遵循以下要求"));
+        assert!(output_rules.contains("约 30–50 个汉字"));
+        assert!(output_rules.contains("不重复标题"));
+        assert!(output_rules.contains("内容不足时如实简短描述，不为凑字数编造"));
+        assert!(output_rules.contains("JSON 字符串内换行、引号必须正确转义"));
+    }
 }

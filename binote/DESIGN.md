@@ -14,6 +14,8 @@
 
 总结和 preview 由同一次请求生成，API 与 Codex 共用提示词；三个总结落盘入口使用统一解析器。preview 可选，旧 Note 无需迁移，完整预览存储后由 CSS 单行省略；没有预览时显示转录摘录。详见 [跨层契约](../.trellis/spec/backend/summary-preview-contract.md)。
 
+总结正文逐字保留原完整提示词的章节、顺序、图标、金句提取和转录质量警告，仅在其后追加 JSON 返回格式与 preview 要求。列表的纯文字设计只约束预览展示；思维导图提示词保持独立。完整原文回归基线保存在 `src-tauri/src/testdata/summary_prompt_original.md`。
+
 路由卸载不取消后台任务，回来通过 list_tasks 恢复。阅读页使用路由版本丢弃迟到的笔记/生成返回；二维码请求使用会话标识，关闭后不能再次启动轮询。DialogFrame 统一 Escape、焦点和滚动管理。
 
 ## 交互与等待反馈

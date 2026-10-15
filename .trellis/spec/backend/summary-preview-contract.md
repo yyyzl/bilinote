@@ -4,6 +4,8 @@
 
 `llm.rs::build_summary_prompt(title, transcript) -> String` 同时要求 Markdown 总结与约 30–50 个汉字的具体内容预览。`GenerationClient` 的 API 和 Codex 路由共用它，不为预览新增请求。原有转录、总结、导图开关与取消机制保持有效。
 
+正文总结要求以 `c37425a` 的原始提示词为基线：完整保留四个章节、原顺序与图标、金句提取规则、六项要求及转录质量警告。JSON 包装和 preview 规则只能在原文之后追加；列表不使用图标的界面要求不能改变总结正文提示词。API / Codex、流式 / 非流式共用这一基线；思维导图提示词独立保留。`llm.rs` 的回归测试使用从历史原文固定的测试样本逐字比较正文要求，避免仅检查章节名称而遗漏内容变化。
+
 生成的最终文本经过 `summary_output.rs::parse_summary_output(raw: &str) -> Result<SummaryOutput>`。结构：
 
 ```json
