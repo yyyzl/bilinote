@@ -5,14 +5,14 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc && vite build",
+    "test:unit": "node scripts/run-unit-tests.cjs",
+    "test:ui": "node scripts/verify-ui.cjs && node scripts/verify-flows.cjs && node scripts/verify-interactions.cjs && node scripts/verify-inline-tasks.cjs && node scripts/verify-flat-layout.cjs && node scripts/verify-task-recovery.cjs && node scripts/verify-task-consistency.cjs",
     "tauri": "tauri",
     "desktop:build": "tauri build",
     "mac:build": "node scripts/build-macos.mjs",
     "mac:build:signed": "node scripts/build-macos.mjs --signed"
   },
   "dependencies": {
-    "@fontsource/manrope": "^5.2.8",
-    "@fontsource/newsreader": "^5.2.10",
     "@tauri-apps/api": "^2.0.0",
     "@tauri-apps/plugin-notification": "^2.3.3",
     "@tauri-apps/plugin-shell": "^2.0.0",

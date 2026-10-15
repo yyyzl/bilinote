@@ -97,6 +97,9 @@ pub struct Note {
     pub cover: String,
     pub transcript: String,
     pub summary: Option<String>,
+    /// 与总结同次生成的列表预览；旧笔记缺省，由界面使用转录摘录。
+    #[serde(default)]
+    pub preview: Option<String>,
     pub mindmap: Option<String>,
     pub created_at: i64,
     /// 转录来源: "subtitle" | "asr" | "mixed"，旧数据为 None

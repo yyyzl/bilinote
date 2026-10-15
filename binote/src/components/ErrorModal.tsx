@@ -1,5 +1,6 @@
-import { useEffect } from "react";
-import { AlertTriangle, X } from "lucide-react";
+import { useRef } from "react";
+import { TriangleAlert } from "lucide-react";
+import DialogFrame from "./DialogFrame";
 
 interface ErrorModalProps {
   error: string | null;
@@ -18,76 +19,25 @@ export function formatError(e: unknown): string {
 }
 
 export default function ErrorModal({ error, onClose }: ErrorModalProps) {
-  useEffect(() => {
-    if (!error) return;
-
-    const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape") {
-        onClose();
-      }
-    };
-
-    document.body.style.overflow = "hidden";
-    window.addEventListener("keydown", handleKeyDown);
-    return () => {
-      document.body.style.overflow = "";
-      window.removeEventListener("keydown", handleKeyDown);
-    };
-  }, [error, onClose]);
-
-  if (!error) return null;
-
+  const lastError = useRef(error);
+  if (error) lastError.current = error;
   return (
-    <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-ink-900/[0.35] p-4 backdrop-blur-md"
-      role="dialog"
-      aria-modal="true"
-      aria-labelledby="error-modal-title"
-      onClick={onClose}
-    >
-      <div
-        className="w-full max-w-2xl overflow-hidden rounded-[28px] border border-paper-200/80 bg-paper-50/[0.96] shadow-float ring-1 ring-white/70"
-        onClick={(event) => event.stopPropagation()}
-      >
-        <div className="flex items-start justify-between gap-4 border-b border-ink-100/80 px-6 py-5">
-          <div className="flex items-start gap-4">
-            <div className="flex h-12 w-12 items-center justify-center rounded-full border border-red-200 bg-red-50 text-red-500">
-              <AlertTriangle size={20} />
-            </div>
-            <div>
-              <p className="editorial-kicker">Error Report</p>
-              <h3 id="error-modal-title" className="mt-1 font-display text-2xl font-semibold text-ink-900">
-                发生错误
-              </h3>
-              <p className="mt-2 max-w-xl text-sm leading-6 text-ink-500">
-                操作没有成功完成。下面是详细错误信息，方便你定位问题。
-              </p>
-            </div>
-          </div>
-          <button
-            onClick={onClose}
-            className="button-tertiary min-h-10 self-start !px-3 !py-2"
-            aria-label="关闭错误详情"
-          >
-            <X size={18} />
-          </button>
-        </div>
-
-        <div className="space-y-4 p-6">
-          <div className="editorial-chip border-red-200 bg-red-50 text-red-600">
-            <span className="h-2 w-2 rounded-full bg-red-500" />
-            Technical Details
-          </div>
-          <pre className="max-h-[56vh] overflow-auto rounded-[24px] border border-red-100 bg-red-50/60 p-4 font-mono text-sm leading-7 text-red-700 whitespace-pre-wrap break-all">
-            {error}
-          </pre>
-          <div className="flex justify-end">
-            <button onClick={onClose} className="button-secondary">
-              关闭
-            </button>
-          </div>
-        </div>
+    <DialogFrame open={Boolean(error)} title="操作未完成" onClose={onClose}>
+      <div className="flex gap-3 text-sm leading-7 text-ink-600">
+        <TriangleAlert size={22} className="mt-1 shrink-0 text-amber-600" />
+        <p>这次操作没有完成。可以关闭提示后重试，或查看下方原因。</p>
       </div>
-    </div>
+      <details className="mt-5 rounded-xl border border-ink-100 bg-canvas-50 p-4">
+        <summary className="cursor-pointer text-sm font-medium text-ink-600">
+          查看错误详情
+        </summary>
+        <pre className="mt-3 max-h-[40vh] whitespace-pre-wrap break-all text-xs leading-6 text-ink-500">
+          {lastError.current}
+        </pre>
+      </details>
+      <button onClick={onClose} className="button-secondary mt-6 w-full">
+        知道了
+      </button>
+    </DialogFrame>
   );
 }

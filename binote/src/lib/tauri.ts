@@ -19,6 +19,8 @@ export interface Note {
   cover: string;
   transcript: string;
   summary: string | null;
+  /** 与总结同次生成的完整预览，旧笔记为 null */
+  preview: string | null;
   mindmap: string | null;
   created_at: number;
   /** 转录来源: "subtitle" | "asr" | "mixed"，旧数据为 null */
@@ -141,7 +143,7 @@ export const startMindmap = (noteId: string) => invoke<string>("start_mindmap", 
 export const getTaskStatus = (taskId: string) => invoke<TaskInfo>("get_task_status", { taskId });
 export const listTasks = () => invoke<TaskListEntry[]>("list_tasks");
 export const cancelTask = (taskId: string) => invoke("cancel_task", { taskId });
-export const consumeNotificationNavTarget = () => invoke<string | null>("consume_notification_nav_target");
+export const dismissTask = (taskId: string) => invoke("dismiss_task", { taskId });
 export const verifySessdata = (sessdata: string) => invoke<LoginStatus>("verify_sessdata", { sessdata });
 
 export const testLlmConnection = (

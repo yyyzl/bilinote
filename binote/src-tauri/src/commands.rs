@@ -498,6 +498,7 @@ async fn perform_transcription(
         cover: info.cover,
         transcript,
         summary: None,
+        preview: None,
         mindmap: None,
         created_at: chrono::Utc::now().timestamp(),
         transcript_source,
@@ -607,34 +608,33 @@ pub async fn summarize(
     let _ = app.emit("summarize:progress", "生成总结...");
 
     let app_clone = app.clone();
-    let generation = llm
-        .summarize_with_retry(
-            &note.transcript,
-            &note.title,
-            Some(move |ctx: RetryContext| {
-                let msg = match ctx.last_error {
-                    Some(err) => format!(
-                        "AI 总结失败，正在重试 ({}/{}): {}",
-                        ctx.attempt, ctx.max_attempts, err
-                    ),
-                    None => format!(
-                        "AI 总结失败，正在重试 ({}/{})...",
-                        ctx.attempt, ctx.max_attempts
-                    ),
-                };
-                let _ = app_clone.emit("summarize:progress", msg);
-            }),
-        );
+    let generation = llm.summarize_with_retry(
+        &note.transcript,
+        &note.title,
+        Some(move |ctx: RetryContext| {
+            let msg = match ctx.last_error {
+                Some(err) => format!(
+                    "AI 总结失败，正在重试 ({}/{}): {}",
+                    ctx.attempt, ctx.max_attempts, err
+                ),
+                None => format!(
+                    "AI 总结失败，正在重试 ({}/{})...",
+                    ctx.attempt, ctx.max_attempts
+                ),
+            };
+            let _ = app_clone.emit("summarize:progress", msg);
+        }),
+    );
     let summary = tokio::select! {
         _ = state.global_cancel.cancelled() => return Err(crate::error::AppError::StoreError("任务已取消".into())),
         result = generation => result?,
     };
+    let summary = crate::summary_output::parse_summary_output(&summary)?;
 
-    let note = state
-        .store
-        .lock()
-        .unwrap()
-        .update_note(&note_id, |n| n.summary = Some(summary))?;
+    let note = state.store.lock().unwrap().update_note(&note_id, |n| {
+        n.summary = Some(summary.summary);
+        n.preview = summary.preview;
+    })?;
 
     Ok(note)
 }
@@ -843,6 +843,57 @@ pub async fn list_tasks(state: State<'_, AppState>) -> Result<Vec<TaskListEntry>
     Ok(entries)
 }
 
+/// 仅移除终态任务，避免界面隐藏了仍在处理的工作。重复移除视为成功。
+fn dismiss_finished_task(tasks: &mut HashMap<String, TaskInfo>, task_id: &str) -> Result<()> {
+    if let Some(task) = tasks.get(task_id) {
+        if !matches!(task.status.as_str(), "completed" | "failed" | "cancelled") {
+            return Err(crate::error::AppError::StoreError(
+                "任务仍在处理中，请先取消或等待完成".into(),
+            ));
+        }
+    }
+    tasks.remove(task_id);
+    Ok(())
+}
+
+#[tauri::command]
+pub fn dismiss_task(task_id: String, state: State<'_, AppState>) -> Result<()> {
+    {
+        let mut tasks = state.tasks.lock().unwrap();
+        dismiss_finished_task(&mut tasks, &task_id)?;
+    }
+    state.task_handles.lock().unwrap().remove(&task_id);
+    Ok(())
+}
+
+#[cfg(test)]
+mod task_record_tests {
+    use super::*;
+
+    #[test]
+    fn dismiss_removes_finished_records_and_is_idempotent() {
+        for status in ["completed", "failed", "cancelled"] {
+            let mut task = TaskInfo::queued("summarize", None, None, Some("note".into()));
+            task.status = status.into();
+            let mut tasks = HashMap::from([("task".into(), task)]);
+            dismiss_finished_task(&mut tasks, "task").unwrap();
+            assert!(tasks.is_empty());
+            dismiss_finished_task(&mut tasks, "task").unwrap();
+        }
+    }
+
+    #[test]
+    fn dismiss_keeps_queued_and_running_tasks() {
+        for status in ["queued", "running"] {
+            let mut task = TaskInfo::queued("transcribe", Some("BV1".into()), None, None);
+            task.status = status.into();
+            let mut tasks = HashMap::from([("task".into(), task)]);
+            assert!(dismiss_finished_task(&mut tasks, "task").is_err());
+            assert_eq!(tasks["task"].status, status);
+        }
+    }
+}
+
 async fn transcribe_background(
     bvid: String,
     source_url: Option<String>,
@@ -902,7 +953,12 @@ async fn transcribe_background(
 
     // 未配置 API 时保持纯转录；Codex 认证不依赖 API Key。
     if config.llm_provider == LlmProvider::Api
-        && config.llm_api_key.as_deref().unwrap_or("").trim().is_empty()
+        && config
+            .llm_api_key
+            .as_deref()
+            .unwrap_or("")
+            .trim()
+            .is_empty()
     {
         return Ok(TranscribeResult::TranscribeOnly {
             note,
@@ -912,11 +968,13 @@ async fn transcribe_background(
     }
     let llm = match generation_client(&app, &config) {
         Ok(client) => client,
-        Err(error) => return Ok(TranscribeResult::TranscribeOnly {
-            note,
-            summarize_error: auto_summary.then(|| error.to_string()),
-            mindmap_error: auto_mindmap.then(|| error.to_string()),
-        }),
+        Err(error) => {
+            return Ok(TranscribeResult::TranscribeOnly {
+                note,
+                summarize_error: auto_summary.then(|| error.to_string()),
+                mindmap_error: auto_mindmap.then(|| error.to_string()),
+            })
+        }
     };
 
     // 进度文案按开关组合：两个都开 → "总结和思维导图"；单选 → 对应项
@@ -970,7 +1028,8 @@ async fn transcribe_background(
                         );
                     },
                 )
-                .await,
+                .await
+                .and_then(|raw| crate::summary_output::parse_summary_output(&raw)),
             )
         }
     };
@@ -1032,10 +1091,13 @@ async fn transcribe_background(
         Some(Err(e)) => (None, Some(format!("思维导图失败: {}", e))),
     };
 
-    // 字段级合并写回（只覆盖 summary / mindmap 两个字段，不整条覆盖）
+    // 字段级合并写回总结、预览与导图，不整条覆盖。
     let note_id = note.id.clone();
     let updated_note = state.store.lock().unwrap().update_note(&note_id, |n| {
-        n.summary = summary;
+        if let Some(output) = summary {
+            n.summary = Some(output.summary);
+            n.preview = output.preview;
+        }
         n.mindmap = mindmap;
     })?;
 
@@ -1238,11 +1300,12 @@ async fn summarize_background(note_id: String, task_id: String, app: AppHandle) 
         )
         .await?;
 
-    let note = state
-        .store
-        .lock()
-        .unwrap()
-        .update_note(&note_id, |n| n.summary = Some(summary))?;
+    let summary = crate::summary_output::parse_summary_output(&summary)?;
+
+    let note = state.store.lock().unwrap().update_note(&note_id, |n| {
+        n.summary = Some(summary.summary);
+        n.preview = summary.preview;
+    })?;
 
     Ok(note)
 }
@@ -1431,7 +1494,9 @@ async fn mindmap_background(note_id: String, task_id: String, app: AppHandle) ->
 }
 
 fn codex_work_dir(app: &AppHandle) -> Result<PathBuf> {
-    app.path().app_cache_dir().map(|path| path.join("codex-workspace"))
+    app.path()
+        .app_cache_dir()
+        .map(|path| path.join("codex-workspace"))
         .map_err(|_| crate::error::AppError::StoreError("无法访问 Codex 工作目录".into()))
 }
 

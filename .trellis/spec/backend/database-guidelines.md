@@ -59,6 +59,8 @@ pub struct Note {
     pub cover: String,           // Cover image URL
     pub transcript: String,      // ASR transcription result
     pub summary: Option<String>, // AI summary (Markdown)
+    #[serde(default)]
+    pub preview: Option<String>, // 与总结同次生成的完整预览，旧数据为 None
     pub mindmap: Option<String>, // Mermaid mindmap code
     pub created_at: i64,         // Unix timestamp
 }
@@ -170,3 +172,8 @@ let result = do_async_work(&config).await?;
 ### ❌ Don't: Use concurrent writes without Mutex
 
 The Store is wrapped in `Mutex<Store>` in `AppState` to prevent data races from concurrent Tauri commands.
+
+
+## 总结预览字段
+
+`Note.preview` 为可选字符串，缺失时不触发迁移或批量重写。总结与预览通过同一 `update_note` 闭包写回，避免并发生成导图时互相覆盖。验证矩阵见 [总结与预览契约](./summary-preview-contract.md)。

@@ -101,7 +101,7 @@ export const getNote = (id: string) => invoke<Note>("get_note", { id });
 
 ### ✅ Error boundary pattern
 
-All user-facing errors should flow through `formatError()` and display via `ErrorModal`:
+用户主动操作的异常通过 `formatError()` 进入 `ErrorModal`，默认折叠技术详情。首次内容读取失败使用 `LoadFailure` 在原位重试，复制失败使用按钮内反馈；后台刷新失败保留已加载内容，不把暂时不可用显示为空库。
 
 ```typescript
 try {

@@ -1,8 +1,11 @@
-use tauri::{AppHandle, Manager};
+use tauri::AppHandle;
+#[cfg(target_os = "android")]
+use tauri::Manager;
 use tauri_plugin_notification::NotificationExt;
 
 /// 通知导航目标文件名
 /// Android 端 MainActivity.kt 会读取此文件获取 note_id
+#[cfg(target_os = "android")]
 const NAV_TARGET_FILENAME: &str = ".notification_nav_target";
 
 /// 通知类型枚举
@@ -101,6 +104,7 @@ pub fn send_notification(app: &AppHandle, notification_type: NotificationType) {
 
     // 写入导航目标文件，供 Android 端 MainActivity 读取
     // 必须在 show() 之前写入，确保点击通知时文件已存在
+    #[cfg(target_os = "android")]
     if let Some(ref id) = note_id {
         write_nav_target(app, id);
     }
@@ -118,37 +122,12 @@ pub fn send_notification(app: &AppHandle, notification_type: NotificationType) {
 
 /// 写入通知导航目标文件
 /// Android 端 MainActivity.kt 在通知点击时读取此文件获取 note_id
+#[cfg(target_os = "android")]
 fn write_nav_target(app: &AppHandle, note_id: &str) {
     if let Ok(data_dir) = app.path().data_dir() {
         let target_path = data_dir.join(NAV_TARGET_FILENAME);
         if let Err(e) = std::fs::write(&target_path, note_id) {
             eprintln!("Failed to write notification nav target: {}", e);
-        }
-    }
-}
-
-#[tauri::command]
-pub fn consume_notification_nav_target(app: AppHandle) -> Option<String> {
-    let data_dir = app.path().data_dir().ok()?;
-    let target_path = data_dir.join(NAV_TARGET_FILENAME);
-
-    match std::fs::read_to_string(&target_path) {
-        Ok(note_id) => {
-            if let Err(e) = std::fs::remove_file(&target_path) {
-                eprintln!("Failed to remove notification nav target: {}", e);
-            }
-
-            let note_id = note_id.trim().to_string();
-            if note_id.is_empty() {
-                None
-            } else {
-                Some(note_id)
-            }
-        }
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => None,
-        Err(e) => {
-            eprintln!("Failed to read notification nav target: {}", e);
-            None
         }
     }
 }

@@ -10,6 +10,7 @@ pub mod llm;
 pub mod notification;
 pub mod retry;
 pub mod store;
+pub mod summary_output;
 
 use commands::{cancel_all_tasks, AppState};
 use std::collections::HashMap;
@@ -68,6 +69,7 @@ pub fn run() {
             commands::start_transcribe,
             commands::get_task_status,
             commands::list_tasks,
+            commands::dismiss_task,
             commands::start_summarize,
             commands::start_mindmap,
             commands::cancel_task,
@@ -80,7 +82,6 @@ pub fn run() {
             commands::qrcode_poll,
             commands::get_login_status,
             commands::logout_bilibili,
-            notification::consume_notification_nav_target,
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application");

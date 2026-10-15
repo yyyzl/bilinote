@@ -163,54 +163,33 @@ export default function Modal({
 
 ### Theme Colors
 
-Editorial / paper aesthetic — terracotta primary on warm cream paper with ink-toned text. See `binote/tailwind.config.js` for the full scale.
+2026-10-15 用户确认绿色知识工作台，替代旧纸感视觉。源文件为 `binote/tailwind.config.js` 与 `src/styles/globals.css`。
 
-| Role | Tailwind Class | Hex | Usage |
-|------|---------------|-----|-------|
-| Primary | `primary-500` | `#b75d3e` | Primary buttons, focus rings, brand accents (terracotta) |
-| Primary deep | `primary-700` | `#7f3f2d` | Hover/active on primary |
-| Primary tint | `primary-100` | `#f2e2d8` | Subtle hover backgrounds, soft chips |
-| Canvas | `canvas-50` | `#fbf8f2` | Page background (warm cream) |
-| Paper | `paper-50` | `#fffdf8` | Card / panel surfaces |
-| Text | `ink-900` | `#1f1b18` | Primary text (warm near-black) |
-| Muted text | `ink-500` | `#6d6257` | Secondary text |
-| Subtle text | `ink-400` / `ink-300` | — | Captions, dividers, placeholder |
-| Sage accent | `sage-500` | `#78806f` | Quiet supporting accent |
-| Gold accent | `gold-500` | `#b88a53` | Metric / highlight accent |
+| 角色 | Token / class | 值 |
+|------|---------------|----|
+| 顶栏 | `.app-header` | `#1b2c24` |
+| 画布 | `canvas-50` | `#f3f6f2` |
+| 表面 | `paper-50` | `#ffffff` |
+| 主操作 | `.button-primary` | `#cbea78`，深色文字 |
+| 功能强调 | `primary-500` | `#4f7c42` |
+| 文字 | `ink-900` | `#15271d` |
+| 次要文字 | `ink-500` | `#66756b` |
+| 边框 | `ink-100` | `#e1e7df` |
 
 ### Typography
 
-- Body: `font-sans` → **Manrope** (with PingFang SC / Noto Sans SC fallbacks for CJK)
-- Display / headings: `font-display` → **Newsreader** serif (with Source Han Serif / Songti fallbacks) — used in `.title-display` / `.section-display` for editorial-style titles
+`font-sans` 与 `font-display` 均使用 Segoe UI、Microsoft YaHei、PingFang SC 与系统无衬线字体。无需远程字体或字体包；Windows 字形通过 CDP 实测 Segoe UI / Microsoft YaHei。桌面页面标题 44px、笔记标题 20px；手机分别 29px、16px。
 
-### Custom Shadows
+### Layout and components
 
-All shadows are warm-toned (rgba based on burnt-orange ink), not cool grey.
-
-```typescript
-// Default card — soft warm drop shadow
-className="shadow-soft"   // 0 18px 40px -24px rgba(58, 44, 28, 0.28)
-
-// Elevated panel (hero, modal)
-className="shadow-panel"  // 0 24px 60px -34px rgba(59, 44, 25, 0.32)
-
-// Floating element (popover, toast)
-className="shadow-float"  // 0 28px 80px -38px rgba(75, 53, 27, 0.38)
-
-// Inner highlight (used on glass surfaces)
-className="shadow-inset"  // inset 0 1px 0 rgba(255, 255, 255, 0.72)
-```
-
-### Component classes
-
-Reusable styles live as `@layer components` in `binote/src/styles/globals.css`:
-
-- `.hero-panel` / `.editorial-card` / `.editorial-card-muted` — paper surfaces with glass blur + inner highlight
-- `.editorial-chip` / `.editorial-kicker` — uppercase tracking-wide labels
-- `.title-display` / `.section-display` / `.body-muted` — editorial typography scale
-- `.button-primary` / `.button-secondary` / `.button-tertiary` — pill buttons with warm shadow
-- `.input-shell` / `.textarea-shell` — large rounded inputs with primary focus ring
-- `.divider-soft` — fading horizontal rule
+- 页面使用 `components/AppLayout.tsx`：顶栏在桌面和手机统一提供品牌与设置工具，设置页改为返回笔记库。仅一个内容库时不保留侧栏、重复库导航项或底部导航。正文居中，最大外宽 1344px、桌面左右内距 32px；手机左右 16px。
+- 阅读页传 `reader`，手机保留内容操作栏并为它预留底部安全区；普通页面不再为导航预留 100px。HashRouter 内的目录使用 `scrollIntoView`，不要使用会改写路由的 fragment 链接。
+- 笔记列表不依赖封面、不在标题前填装饰图标。`lib/note-preview.ts::getNotePreview(note)` 优先 `preview`，回退可读转录；UI 单行省略，保存完整文字。
+- 设置按视频转录、AI 笔记生成分两栏，自动产物开关属于 AI 栏；640px 以下垂直排列。
+- `.panel`、`.input-shell`、三种 `.button-*`、`.icon-button` 是共享样式。旧 `.editorial-*` 仅供现有弹窗复用，外观已统一为白底、绿色边框和圆角。
+- `DialogFrame` 管理 Escape、焦点约束、关闭后焦点恢复和背景滚动。阅读标签支持左右方向键、Home / End。
+- 后台任务属于笔记库局部区域，使用摘要加原位展开列表，不增加独立导航或模态遮罩。展开期间仍可操作笔记；失败任务也必须有入口。仅扫码、确认和错误使用 DialogFrame。
+- Mermaid 保留 strict 安全模式，通过 `cScale*`、`cScaleInv*`、`cScaleLabel*`、`git0` 统一绿色调，SVG 适配容器，缩放后可滚动。
 
 ### Responsive Design
 
@@ -220,6 +199,14 @@ Reusable styles live as `@layer components` in `binote/src/styles/globals.css`:
 ```
 
 ### Animation Patterns
+
+2026-10-15 交互规范：页面/标签淡入 140–160ms，弹窗进入 220ms、退出 160ms；使用 globals.css 的 motion 变量，避免给后台请求增加人为延时。`prefers-reduced-motion` 同时覆盖 CSS 动画和目录的 JS 平滑滚动。
+
+- `LoadingState` 区分初次读取与真实空内容，`LoadFailure` 提供就地重试。
+- `PendingNotice` 展示后台实际状态和已等待时间，保留旧内容；禁止虚构百分比或预计完成时间。
+- `DialogFrame(open, busy, initialFocusRef)` 通过 portal 管理进入/退出、栈顶焦点约束和共享滚动锁。不要再为确认/错误弹窗单独维护这些行为。
+- 提交/保存/取消/删除/重试必须有同步请求锁与可见等待态；异步失败保留输入或原有产物。
+- 危险操作默认聚焦取消，不使用全局 Enter 绕过焦点直接提交。
 
 ```typescript
 // Transition on hover
