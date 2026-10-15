@@ -35,3 +35,27 @@ test("拒绝新增签名者，避免改变旧版的签名集合", { timeout: 100
 test("公钥摘要不能冒充证书摘要", { timeout: 10000 }, () => {
   assert.equal(verify(matching.replace("certificate SHA-256", "public key SHA-256")).status, 1);
 });
+
+// SDK 37 的真实输出使用版本化 Signer 名称，证书本身仍与历史版本一致。
+const sdk37 = `Verifies\nNumber of signers: 1\nV3.0 Signer: certificate SHA-256 digest: ${legacy}\n`;
+
+test("支持 SDK 37 的版本化签名者输出", { timeout: 10000 }, () => {
+  for (const scheme of ["V3.0", "V3.1", "V3.2"]) {
+    assert.equal(verify(sdk37.replace("V3.0", scheme)).status, 0);
+  }
+});
+
+test("SDK 37 仍拒绝不同证书及多个签名者", { timeout: 10000 }, () => {
+  for (const output of [sdk37.replace(legacy, "0".repeat(64)),
+    sdk37.replace("Number of signers: 1", "Number of signers: 2"),
+    sdk37 + `V3.1 Signer: certificate SHA-256 digest: ${legacy}\n`]) {
+    assert.equal(verify(output).status, 1);
+  }
+});
+
+test("SDK 37 缺少签名者数量或证书格式不完整时拒绝", { timeout: 10000 }, () => {
+  for (const output of [sdk37.replace("Number of signers: 1\n", ""),
+    sdk37.replace(legacy, "invalid"), sdk37.replace("V3.0 Signer:", "Unknown Signer:")]) {
+    assert.equal(verify(output).status, 1);
+  }
+});
