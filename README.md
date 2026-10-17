@@ -1,3 +1,6 @@
+
+</think>
+
 # BiNote · B站 AI 笔记助手
 
 > 一键把 B站视频转成可搜索、可总结的结构化笔记。Tauri 2 + Rust + React 实现，**Windows / macOS / Android** 三端同源。
@@ -88,7 +91,7 @@ npm run tauri build
 
 ```bash
 cd binote
-bash build-macos.sh
+npm run mac:build
 ```
 
 未配置 Apple Developer 证书时默认产**未签名包**，首次打开需在「隐私与安全性」里手动允许。需要签名 + 公证时改用 `npm run mac:build:signed`，并在 macOS 上配好证书。
