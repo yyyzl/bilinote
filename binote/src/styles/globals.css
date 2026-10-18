@@ -67,27 +67,8 @@
     @apply inline-flex min-h-11 shrink-0 items-center gap-2 rounded-lg px-3 text-sm text-[#eaf1e9] hover:bg-white/10;
   }
   .brand-mark {
-    @apply relative ml-2 inline-block h-[29px] w-[29px];
-  }
-  .brand-mark::before,
-  .brand-mark::after {
-    content: "";
-    position: absolute;
-    width: 16px;
-    height: 23px;
-    top: 4px;
-    transform: skewY(-30deg);
-    border-radius: 4px 0 1px 1px;
-  }
-  .brand-mark::before {
-    background: #a5c79a;
-    left: 0;
-    z-index: 1;
-  }
-  .brand-mark::after {
-    background: #426e48;
-    left: 13px;
-    top: 1px;
+    @apply ml-1 inline-block h-11 w-11;
+    background: url("../../app-icon.svg") center / contain no-repeat;
   }
   .workspace-main {
     @apply mx-auto w-full max-w-[1344px] px-8 pb-9 pt-7;

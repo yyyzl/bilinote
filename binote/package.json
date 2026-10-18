@@ -5,6 +5,7 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc && vite build",
+    "icons:generate": "node scripts/generate-icons.mjs",
     "test:unit": "node scripts/run-unit-tests.cjs",
     "test:android-signing": "node --test scripts/verify-android-signing.test.cjs",
     "test:ui": "node scripts/verify-ui.cjs && node scripts/verify-flows.cjs && node scripts/verify-interactions.cjs && node scripts/verify-inline-tasks.cjs && node scripts/verify-flat-layout.cjs && node scripts/verify-task-recovery.cjs && node scripts/verify-task-consistency.cjs",

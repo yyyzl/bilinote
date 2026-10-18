@@ -24,7 +24,14 @@ npm run tauri dev          # 开发模式
 npm run tauri build        # 桌面端打包（当前平台）
 npm run mac:build          # macOS universal 打包（仅 macOS）
 npm run build              # TypeScript 与前端生产构建
+npm run icons:generate     # 从 app-icon.svg 重新导出所有平台图标
 npm run test:unit          # Rust 单元测试（进程上限 60 秒）
 npm run test:ui            # 离线浏览器回归（需先启动 Vite 和准备 Playwright）
 bash build-android.sh      # Android APK 打包（含签名）
 ```
+
+## 应用图标
+
+`app-icon.svg` 是「电视笔记小幽灵」的可编辑矢量母版，外部透明，保留电视天线、双眼、笔记线和纸页折角。应用顶栏与浏览器图标直接引用它。
+
+修改 SVG 后运行 `npm run icons:generate`，统一更新根目录的 `app-icon.png`、`src-tauri/icons/` 下的 PNG / ICO / ICNS 与 Android、iOS 资源；本地已初始化的 Android 工程也会同步。修改图标后需要重新构建安装包，已安装应用不会自动变化。

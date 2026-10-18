@@ -1,0 +1,46 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1254 1254" role="img" aria-labelledby="title desc">
+  <title id="title">BiNote 电视笔记小幽灵</title>
+  <desc id="desc">带天线和双眼的电视小幽灵，下半身是有两行笔记与折角的纸页。</desc>
+  <!-- 单一矢量母版：外部透明，角色使用墨黑与暖白。 -->
+  <g stroke="#171717" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M 620 340 L 575 198 M 678 341 L 795 237" fill="none" stroke-width="78"/>
+    <path d="M 342 842
+      C 310 798 298 739 303 666
+      L 315 522
+      C 325 400 388 344 528 329
+      C 651 316 813 326 901 361
+      C 989 396 1014 457 1015 570
+      L 1011 838
+      C 1010 868 1001 889 978 914
+      L 845 1053
+      C 824 1075 807 1082 774 1081
+      C 679 1080 617 1054 563 1024
+      C 519 999 477 1003 430 1010
+      L 359 1017
+      C 297 1021 252 991 233 946
+      C 215 908 211 866 230 852
+      C 251 837 279 876 307 865
+      C 323 861 334 853 342 842 Z"
+      fill="#fffaf1" stroke-width="34"/>
+    <path d="M 447 416
+      C 548 394 722 399 831 412
+      C 897 420 927 459 932 526
+      L 940 652
+      C 945 720 923 758 868 769
+      C 754 784 548 771 461 754
+      C 410 745 389 717 386 665
+      L 382 549
+      C 380 481 395 432 447 416 Z"
+      fill="#171717" stroke="none"/>
+    <path d="M 445 820 L 762 838 M 440 900 L 652 913"
+      fill="none" stroke-width="44"/>
+    <path d="M 1005 857 L 888 868
+      C 842 872 821 888 818 938
+      L 812 1068"
+      fill="none" stroke-width="34"/>
+  </g>
+  <g fill="#fffaf1">
+    <ellipse cx="554" cy="595" rx="40" ry="63" transform="rotate(8 554 595)"/>
+    <ellipse cx="761" cy="610" rx="40" ry="62" transform="rotate(8 761 610)"/>
+  </g>
+</svg>
