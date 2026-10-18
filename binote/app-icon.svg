@@ -1,8 +1,8 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1254 1254" role="img" aria-labelledby="title desc">
   <title id="title">BiNote 电视笔记小幽灵</title>
-  <desc id="desc">带天线和双眼的电视小幽灵，下半身是有两行笔记与折角的纸页。</desc>
-  <!-- 单一矢量母版：外部透明，角色使用墨黑与暖白。 -->
-  <g stroke="#171717" stroke-linecap="round" stroke-linejoin="round">
+  <desc id="desc">蓝色屏幕、深蓝轮廓的电视小幽灵，下半身是有两行笔记与折角的暖白纸页。</desc>
+  <!-- 单一矢量母版：外部透明，使用亮蓝屏幕、深蓝轮廓与暖白纸页。 -->
+  <g stroke="#174b70" stroke-linecap="round" stroke-linejoin="round">
     <path d="M 620 340 L 575 198 M 678 341 L 795 237" fill="none" stroke-width="78"/>
     <path d="M 342 842
       C 310 798 298 739 303 666
@@ -31,7 +31,7 @@
       C 410 745 389 717 386 665
       L 382 549
       C 380 481 395 432 447 416 Z"
-      fill="#171717" stroke="none"/>
+      fill="#00a1d6" stroke="none"/>
     <path d="M 445 820 L 762 838 M 440 900 L 652 913"
       fill="none" stroke-width="44"/>
     <path d="M 1005 857 L 888 868
