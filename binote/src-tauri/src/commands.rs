@@ -9,6 +9,7 @@ use crate::{
     notification::{send_notification, NotificationType},
     retry::RetryContext,
     store::{AppConfig, Note, Store},
+    summary_templates::SummaryTemplateSnapshot,
 };
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -646,6 +647,9 @@ pub async fn start_transcribe(
     source_url: Option<String>,
     app: AppHandle,
 ) -> Result<String> {
+    // Capture only summary template state; ASR/account/provider settings retain their existing timing.
+    let summary_template =
+        SummaryTemplateSnapshot::capture(&state.store.lock().unwrap().load_config()?);
     let task_id = uuid::Uuid::new_v4().to_string();
 
     // 创建任务专属的取消令牌，链接到全局取消令牌
@@ -713,7 +717,7 @@ pub async fn start_transcribe(
                 state.task_handles.lock().unwrap().remove(&task_id_clone);
                 return;
             }
-            result = transcribe_background(bvid, source_url, task_id_clone.clone(), app_clone.clone(), cancel_token_clone.clone(), _permit) => result
+            result = transcribe_background(bvid, source_url, task_id_clone.clone(), app_clone.clone(), cancel_token_clone.clone(), _permit, summary_template) => result
         };
 
         let state = app_clone.state::<AppState>();
@@ -901,6 +905,7 @@ async fn transcribe_background(
     app: AppHandle,
     cancel_token: CancellationToken,
     permit: tokio::sync::OwnedSemaphorePermit,
+    summary_template: SummaryTemplateSnapshot,
 ) -> Result<TranscribeResult> {
     let state = app.state::<AppState>();
     let config = state.store.lock().unwrap().load_config()?;
@@ -967,7 +972,7 @@ async fn transcribe_background(
         });
     }
     let llm = match generation_client(&app, &config) {
-        Ok(client) => client,
+        Ok(client) => client.with_summary_template(summary_template),
         Err(error) => {
             return Ok(TranscribeResult::TranscribeOnly {
                 note,
@@ -1132,6 +1137,8 @@ pub async fn start_summarize(
     note_id: String,
     app: AppHandle,
 ) -> Result<String> {
+    let summary_template =
+        SummaryTemplateSnapshot::capture(&state.store.lock().unwrap().load_config()?);
     let task_id = uuid::Uuid::new_v4().to_string();
 
     // 创建任务专属的取消令牌
@@ -1196,7 +1203,7 @@ pub async fn start_summarize(
                 state.task_handles.lock().unwrap().remove(&task_id_clone);
                 return;
             }
-            result = summarize_background(note_id, task_id_clone.clone(), app_clone.clone()) => result
+            result = summarize_background(note_id, task_id_clone.clone(), app_clone.clone(), summary_template) => result
         };
 
         let state = app_clone.state::<AppState>();
@@ -1250,11 +1257,16 @@ pub async fn start_summarize(
     Ok(task_id)
 }
 
-async fn summarize_background(note_id: String, task_id: String, app: AppHandle) -> Result<Note> {
+async fn summarize_background(
+    note_id: String,
+    task_id: String,
+    app: AppHandle,
+    summary_template: SummaryTemplateSnapshot,
+) -> Result<Note> {
     let state = app.state::<AppState>();
     let config = state.store.lock().unwrap().load_config()?;
 
-    let llm = generation_client(&app, &config)?;
+    let llm = generation_client(&app, &config)?.with_summary_template(summary_template);
 
     let note = state
         .store
@@ -1507,6 +1519,11 @@ fn generation_client(app: &AppHandle, config: &AppConfig) -> Result<GenerationCl
         PathBuf::new()
     };
     GenerationClient::from_config(config, work_dir)
+}
+
+#[tauri::command]
+pub fn get_summary_template_defaults() -> crate::summary_templates::SummaryTemplateDefaults {
+    crate::summary_templates::summary_template_defaults()
 }
 
 #[tauri::command]

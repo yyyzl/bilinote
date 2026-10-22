@@ -32,6 +32,25 @@ export interface Note {
 export type AsrProvider = "dashscope" | "sensevoice";
 export type LlmProvider = "api" | "codex";
 
+export interface SummaryTemplate {
+  id: string;
+  name: string;
+  content: string;
+}
+
+export interface SummaryTemplateLimits {
+  max_templates: number;
+  max_id_bytes: number;
+  max_name_chars: number;
+  max_content_chars: number;
+}
+
+export interface SummaryTemplateDefaults {
+  name: string;
+  content: string;
+  limits: SummaryTemplateLimits;
+}
+
 export interface AppConfig {
   asr_provider: AsrProvider;
   asr_api_key: string | null;
@@ -57,6 +76,9 @@ export interface AppConfig {
   auto_summary: boolean;
   /** 转录完成后自动生成思维导图（默认 true） */
   auto_mindmap: boolean;
+  summary_templates: SummaryTemplate[];
+  /** null selects the immutable built-in summary. */
+  default_summary_template_id: string | null;
   /** 最大同时转录任务数（1-5，默认 2，修改后需重启应用生效） */
   max_concurrent_transcribe: number;
 }
@@ -123,6 +145,8 @@ export interface QrcodePollResult {
   credentials: BiliCredentials | null;
 }
 
+export const getSummaryTemplateDefaults = () =>
+  invoke<SummaryTemplateDefaults>("get_summary_template_defaults");
 export const getConfig = () => invoke<AppConfig>("get_config");
 export const saveConfig = (config: AppConfig) => invoke("save_config", { config });
 

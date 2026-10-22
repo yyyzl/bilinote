@@ -17,8 +17,8 @@ This directory contains guidelines for frontend development. Fill in each file w
 | [Directory Structure](./directory-structure.md) | React module organization and file layout | Done |
 | [Component Guidelines](./component-guidelines.md) | Component patterns, props, Tailwind styling, a11y | Done |
 | [Hook Guidelines](./hook-guidelines.md) | Custom hooks, data fetching, memory safety | Done |
-| [State Management](./state-management.md) | useState, Context, Tauri invoke patterns | Done |
-| [Quality Guidelines](./quality-guidelines.md) | Code standards, forbidden patterns, review checklist | Done |
+| [State Management](./state-management.md) | useState, Context, Tauri invokes, immutable Settings/template drafts | Done |
+| [Quality Guidelines](./quality-guidelines.md) | Code standards, offline browser regressions, review checklist | Done |
 | [Type Safety](./type-safety.md) | TypeScript strict mode, type organization | Done |
 
 ---

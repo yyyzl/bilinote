@@ -1,11 +1,16 @@
 use crate::asr::AsrProvider;
 use crate::error::{AppError, Result};
+use crate::summary_templates::{validate_summary_templates, SummaryTemplate};
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 use tauri::{AppHandle, Manager};
 
 const CONFIG_FILE: &str = "config.json";
 const NOTES_FILE: &str = "notes.json";
+
+#[cfg(test)]
+#[path = "store_tests.rs"]
+mod tests;
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct AppConfig {
@@ -45,6 +50,12 @@ pub struct AppConfig {
     /// 转录完成后是否自动生成 AI 总结（默认开启，保持旧行为）
     #[serde(default = "default_true")]
     pub auto_summary: bool,
+    /// 命名总结模板；内置默认不存储在此列表中。
+    #[serde(default)]
+    pub summary_templates: Vec<SummaryTemplate>,
+    /// 全局默认模板 ID；None 使用原有内置总结格式。
+    #[serde(default)]
+    pub default_summary_template_id: Option<String>,
     /// 转录完成后是否自动生成思维导图（默认开启，保持旧行为）
     #[serde(default = "default_true")]
     pub auto_mindmap: bool,
@@ -80,6 +91,8 @@ impl Default for AppConfig {
             bilibili_dede_user_id: None,
             bilibili_cookie_ts: None,
             auto_summary: true,
+            summary_templates: Vec::new(),
+            default_summary_template_id: None,
             auto_mindmap: true,
             max_concurrent_transcribe: 2,
         }
@@ -142,6 +155,10 @@ impl Store {
     }
 
     pub fn save_config(&self, config: &AppConfig) -> Result<()> {
+        validate_summary_templates(
+            &config.summary_templates,
+            config.default_summary_template_id.as_deref(),
+        )?;
         let path = self.app_dir.join(CONFIG_FILE);
         let content = serde_json::to_string_pretty(config)
             .map_err(|e| AppError::StoreError(e.to_string()))?;

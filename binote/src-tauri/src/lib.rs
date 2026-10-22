@@ -11,6 +11,7 @@ pub mod notification;
 pub mod retry;
 pub mod store;
 pub mod summary_output;
+pub mod summary_templates;
 
 use commands::{cancel_all_tasks, AppState};
 use std::collections::HashMap;
@@ -59,6 +60,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             commands::get_config,
             commands::save_config,
+            commands::get_summary_template_defaults,
             commands::get_notes,
             commands::get_note,
             commands::delete_note,

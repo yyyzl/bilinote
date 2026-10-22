@@ -9,9 +9,15 @@ const output = process.env.BINOTE_QA_DIR
 const base = process.env.BINOTE_TEST_URL || "http://127.0.0.1:5173";
 const onlyLibrary = process.argv[2] === "library";
 
-async function fixture(page, { mobile = false } = {}) {
+async function fixture(page, { mobile = false, initialConfig = {}, persistConfigKey = null, failures = {} } = {}) {
+  const source = await fs.readFile(path.join(__dirname, "../src-tauri/src/summary_templates.rs"), "utf8");
+  const templateDefaults = {
+    name: "标准笔记",
+    content: source.match(/const BUILTIN_SUMMARY_TEMPLATE_CONTENT: &str = r#"([\s\S]*?)"#;/)[1],
+    limits: { max_templates: 50, max_id_bytes: 64, max_name_chars: 80, max_content_chars: 12000 },
+  };
   await page.addInitScript(
-    ({ mobile }) => {
+    ({ mobile, initialConfig, persistConfigKey, failures, templateDefaults }) => {
       const notes = [
         {
           id: "one",
@@ -58,6 +64,8 @@ async function fixture(page, { mobile = false } = {}) {
         codex_fast: false,
         auto_summary: true,
         auto_mindmap: true,
+        summary_templates: [],
+        default_summary_template_id: null,
         max_concurrent_transcribe: 2,
         bilibili_sessdata: null,
         bilibili_bili_jct: null,
@@ -65,6 +73,9 @@ async function fixture(page, { mobile = false } = {}) {
         bilibili_dede_user_id: null,
         bilibili_cookie_ts: null,
       };
+      config = { ...config, ...initialConfig };
+      if (persistConfigKey && sessionStorage.getItem(persistConfigKey))
+        config = JSON.parse(sessionStorage.getItem(persistConfigKey));
       const tasks = [
         {
           task_id: "task-existing",
@@ -85,8 +96,13 @@ async function fixture(page, { mobile = false } = {}) {
       window.__TEST_BACKEND__ = {
         notes,
         tasks,
-        failures: {},
+        failures,
         delays: {},
+        gates: {},
+        releases: {},
+        templateDefaults,
+        get config() { return config; },
+        set config(value) { config = value; },
         qrStatus: "waiting",
       };
       window.__TEST_EMIT__ = (event, payload) => {
@@ -114,6 +130,8 @@ async function fixture(page, { mobile = false } = {}) {
         },
         async invoke(cmd, args = {}) {
           calls.push({ cmd, args });
+          if (window.__TEST_BACKEND__.gates[cmd])
+            await new Promise((resolve) => { window.__TEST_BACKEND__.releases[cmd] = resolve; });
           if (window.__TEST_BACKEND__.failures[cmd])
             throw window.__TEST_BACKEND__.failures[cmd];
           if (cmd === "plugin:event|listen") {
@@ -137,8 +155,11 @@ async function fixture(page, { mobile = false } = {}) {
             return note;
           }
           if (cmd === "get_config") return structuredClone(config);
+          if (cmd === "get_summary_template_defaults")
+            return structuredClone(window.__TEST_BACKEND__.templateDefaults);
           if (cmd === "save_config") {
             config = structuredClone(args.config);
+            if (persistConfigKey) sessionStorage.setItem(persistConfigKey, JSON.stringify(config));
             return null;
           }
           if (cmd === "supports_codex") return !mobile;
@@ -246,7 +267,7 @@ async function fixture(page, { mobile = false } = {}) {
       };
       window.__TAURI_EVENT_PLUGIN_INTERNALS__ = { unregisterListener() {} };
     },
-    { mobile },
+    { mobile, initialConfig, persistConfigKey, failures, templateDefaults },
   );
 }
 

@@ -177,3 +177,27 @@ The Store is wrapped in `Mutex<Store>` in `AppState` to prevent data races from 
 ## 总结预览字段
 
 `Note.preview` 为可选字符串，缺失时不触发迁移或批量重写。总结与预览通过同一 `update_note` 闭包写回，避免并发生成导图时互相覆盖。验证矩阵见 [总结与预览契约](./summary-preview-contract.md)。
+
+## Custom Summary Template Persistence
+
+`AppConfig` includes `summary_templates: Vec<SummaryTemplate>` and `default_summary_template_id: Option<String>`, both with `#[serde(default)]`. Legacy configs deserialize to an empty custom library and a null selection representing the built-in original template. Loading does not migrate or rewrite files. The built-in template is not a mutable entry in this collection.
+
+`SummaryTemplate` (`binote/src-tauri/src/summary_templates.rs`) requires string `id`, `name`, and `content` fields. `Store::save_config` calls `validate_summary_templates` before serializing or opening a temporary file:
+
+| Field / condition | Contract |
+| --- | --- |
+| Collection size | At most 50 custom templates |
+| ID | 1–64 ASCII letters, digits, `_` or `-`; unique |
+| Name | Non-whitespace; at most 80 Unicode scalar values; trimmed names unique, case-sensitive |
+| Content | Non-whitespace; at most 12,000 Unicode scalar values |
+| Default ID | Null for built-in; otherwise an exact existing custom ID (empty string is invalid) |
+| Missing/wrong-type template fields | Deserialization error; do not silently create partial templates |
+| Invalid save | `AppError::StoreError` with a non-sensitive Chinese message; existing config/notes unchanged |
+
+Validation preserves user text verbatim; braces and JSON-like content are ordinary text, not template-language substitutions. Length limits count Unicode scalar values, not UTF-8 bytes or UTF-16 code units. Frontend checks must use the same counting rule when integrated.
+
+Removing the selected custom template must clear the selected ID to null in the same save payload. Do not silently repair a dangling reference in Store: report it so the caller can fix the selection deliberately. Credential updates must load the whole config and change only account fields, preserving the library and default selection.
+
+Executable matrix: `binote/src-tauri/src/store_tests.rs`, run with `npm run test:unit -- store::tests`. It covers legacy/new defaults, literal Unicode round trips, exact limits, duplicate/invalid entries, malformed shapes, deletion fallback payloads, failed-save file preservation, and account-update retention. Tests use unique temporary directories, never real app data.
+
+This section specifies persistence only; generation/UI integration is tracked in `.trellis/tasks/10-22-custom-summary-templates/plan.md`.

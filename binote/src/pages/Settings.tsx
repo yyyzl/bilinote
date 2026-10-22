@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import {
+  ArrowLeft,
   Check,
   Loader2,
   Plug,
@@ -17,6 +18,8 @@ import { QRCodeSVG } from "qrcode.react";
 import * as api from "../lib/tauri";
 import ErrorModal, { formatError } from "../components/ErrorModal";
 import CodexSettings from "../components/CodexSettings";
+import SummaryTemplateSettings, { SummaryTemplateSelect } from "../components/SummaryTemplateSettings";
+import { validateSummaryTemplates } from "../lib/summary-templates";
 
 type SessdataStatus = "idle" | "verifying" | "valid" | "expired" | "error";
 type QrLoginState =
@@ -119,9 +122,18 @@ export default function Settings() {
     bilibili_cookie_ts: null,
     auto_summary: true,
     auto_mindmap: true,
+    summary_templates: [],
+    default_summary_template_id: null,
     max_concurrent_transcribe: 2,
   });
   const [saved, setSaved] = useState(false);
+  const [templateDefaults, setTemplateDefaults] = useState<api.SummaryTemplateDefaults | null>(null);
+  const [showTemplates, setShowTemplates] = useState(false);
+  const [editingTemplateId, setEditingTemplateId] = useState<string | null>(null);
+  const [saveError, setSaveError] = useState("");
+  const headingRef = useRef<HTMLHeadingElement>(null);
+  const manageTemplatesRef = useRef<HTMLButtonElement>(null);
+  const templateViewOpenedRef = useRef(false);
   const [configLoaded, setConfigLoaded] = useState(false);
   const [configLoadError, setConfigLoadError] = useState("");
   const [saving, setSaving] = useState(false);
@@ -195,11 +207,19 @@ export default function Settings() {
     const request = ++loadRequestRef.current;
     if (isMountedRef.current) setConfigLoadError("");
     try {
-      const [data, supported] = await Promise.all([
+      const [loaded, supported, defaults] = await Promise.all([
         api.getConfig(),
         api.supportsCodex(),
+        api.getSummaryTemplateDefaults(),
       ]);
       if (!isMountedRef.current || request !== loadRequestRef.current) return;
+      const data = {
+        ...loaded,
+        summary_templates: loaded.summary_templates ?? [],
+        default_summary_template_id: loaded.default_summary_template_id ?? null,
+      };
+      setTemplateDefaults(defaults);
+      if (!savedConfigRef.current) setEditingTemplateId(data.default_summary_template_id);
       // 登录检查可能比输入更晚完成，刷新不得覆盖用户刚编辑的字段。
       if (!dirtyRef.current || !savedConfigRef.current) {
         savedConfigRef.current = data;
@@ -277,11 +297,13 @@ export default function Settings() {
   ]);
 
   const handleSave = async () => {
-    if (!configLoaded || saveLockRef.current) return;
+    if (!configLoaded || !templateDefaults || saveLockRef.current) return;
     const snapshot = { ...currentConfigRef.current };
+    if (!validateSummaryTemplates(snapshot.summary_templates, snapshot.default_summary_template_id, templateDefaults.limits).valid) return;
     saveLockRef.current = true;
     setSaving(true);
     setSaved(false);
+    setSaveError("");
     try {
       await api.saveConfig(snapshot);
       if (!isMountedRef.current) return;
@@ -296,7 +318,7 @@ export default function Settings() {
         saveTimeoutRef.current = null;
       }, 2000);
     } catch (e) {
-      if (isMountedRef.current) setError(formatError(e));
+      if (isMountedRef.current) setSaveError(formatError(e));
     } finally {
       saveLockRef.current = false;
       if (isMountedRef.current) setSaving(false);
@@ -514,6 +536,34 @@ export default function Settings() {
     }
   };
 
+
+  const templateValidation = templateDefaults
+    ? validateSummaryTemplates(config.summary_templates, config.default_summary_template_id, templateDefaults.limits)
+    : null;
+
+  const changeTemplates = useCallback((templates: api.SummaryTemplate[], defaultId: string | null) => {
+    const updated = { ...currentConfigRef.current, summary_templates: templates, default_summary_template_id: defaultId };
+    // Keep late account refreshes and click-time saves in sync before React commits.
+    currentConfigRef.current = updated;
+    dirtyRef.current = JSON.stringify(updated) !== JSON.stringify(savedConfigRef.current);
+    setConfig(updated);
+    setSaved(false);
+  }, []);
+
+  const changeDefaultTemplate = useCallback((id: string | null) => {
+    changeTemplates(currentConfigRef.current.summary_templates, id);
+  }, [changeTemplates]);
+
+  useEffect(() => {
+    if (showTemplates) {
+      window.scrollTo({ top: 0 });
+      headingRef.current?.focus({ preventScroll: true });
+    } else if (templateViewOpenedRef.current) {
+      manageTemplatesRef.current?.focus();
+    }
+    templateViewOpenedRef.current = showTemplates;
+  }, [showTemplates]);
+
   const asrProvider = config.asr_provider;
   const asrKey =
     asrProvider === "dashscope"
@@ -524,16 +574,19 @@ export default function Settings() {
   const header = (
     <header className="page-header settings-header !items-start">
       <div>
-        <h1>设置</h1>
-        <p className="mt-3 text-sm leading-6 text-ink-500 sm:text-base">
-          从视频到笔记，按你的方式工作。
+        <h1 ref={headingRef} tabIndex={-1} className="outline-none">{showTemplates ? "总结模板" : "设置"}</h1>
+        <p className={`mt-3 text-sm leading-6 text-ink-500 sm:text-base ${showTemplates ? "hidden sm:block" : ""}`}>
+          {showTemplates ? "把总结写成适合自己的笔记。" : "从视频到笔记，按你的方式工作。"}
         </p>
       </div>
+      <div className="flex shrink-0 flex-col items-end gap-2 sm:flex-row sm:items-center sm:gap-4">
+        <span className="order-2 text-xs text-ink-600 sm:order-1">{dirty ? "未保存的修改" : saving ? "正在保存" : ""}</span>
+        <div className="order-1 sm:order-2">
       <button
         className="button-primary shrink-0 !px-4 !text-sm sm:!px-6 sm:!text-base"
         aria-label="保存设置"
         aria-busy={saving}
-        disabled={!configLoaded || saving}
+        disabled={!configLoaded || saving || !templateValidation?.valid}
         onClick={() => void handleSave()}
       >
         {saving ? (
@@ -545,6 +598,8 @@ export default function Settings() {
         )}
         {saving ? "保存中…" : saved && !dirty ? "已保存" : "保存设置"}
       </button>
+        </div>
+      </div>
     </header>
   );
   if (!configLoaded)
@@ -568,7 +623,26 @@ export default function Settings() {
 
   return (
     <AppLayout>
+      {showTemplates && (
+        <button type="button" className="back-line !mb-3 !min-h-10" onClick={() => setShowTemplates(false)}>
+          <ArrowLeft size={16} aria-hidden="true" />返回设置
+        </button>
+      )}
       {header}
+      {saveError && (
+        <div role="alert" className="mb-5 flex flex-wrap items-center justify-between gap-2 rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm leading-6 text-red-800">
+          <p>设置未保存，请重试。你的修改仍然保留。</p>
+          <button type="button" className="button-tertiary !text-red-800" onClick={() => setError(saveError)}>查看详情</button>
+        </div>
+      )}
+      {showTemplates && templateDefaults && templateValidation && (
+        <SummaryTemplateSettings
+          templates={config.summary_templates} defaultId={config.default_summary_template_id}
+          defaults={templateDefaults} editingId={editingTemplateId}
+          onSelect={setEditingTemplateId} onChange={changeTemplates} validation={templateValidation}
+        />
+      )}
+      {!showTemplates && <>
       <div className="settings-grid">
         <section
           className="settings-group"
@@ -853,6 +927,18 @@ export default function Settings() {
                 />
               </>
             )}
+            {templateDefaults && (
+              <section className="border-t border-ink-100 pt-5" aria-label="总结模板设置">
+                <SummaryTemplateSelect
+                  templates={config.summary_templates} value={config.default_summary_template_id}
+                  defaults={templateDefaults} onChange={changeDefaultTemplate} error={templateValidation?.selectionError}
+                />
+                {templateValidation && !templateValidation.valid && (
+                  <p id="summary-template-validation" role="alert" className="mt-3 text-sm leading-6 text-red-700">{templateValidation.message}</p>
+                )}
+                <button ref={manageTemplatesRef} type="button" className="button-secondary mt-4" onClick={() => setShowTemplates(true)}>管理模板</button>
+              </section>
+            )}
             <div className="border-t border-ink-100 pt-5">
               <h3 className="text-base font-semibold">转录完成后</h3>
               <p className="mb-4 mt-1 text-xs leading-6 text-ink-400">
@@ -924,13 +1010,14 @@ export default function Settings() {
           ))}
         </div>
       </section>
-      <p role="status" className="mt-4 text-xs text-ink-400">
+      </>}
+      <p role="status" className="mt-4 text-sm leading-6 text-ink-600">
         {saving
           ? "正在保存设置…"
           : dirty
             ? "还有未保存的修改"
             : saved
-              ? "设置已保存。并发上限变更需重启后生效。"
+              ? showTemplates ? "设置已保存。" : "设置已保存。并发上限变更需重启后生效。"
               : "修改完成后，点击右上角保存设置。"}
       </p>
       <DialogFrame open={showQrModal} title="扫码登录" onClose={closeQrModal}>

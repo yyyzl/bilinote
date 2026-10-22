@@ -103,6 +103,8 @@ export const getNote = (id: string) => invoke<Note>("get_note", { id });
 
 用户主动操作的异常通过 `formatError()` 进入 `ErrorModal`，默认折叠技术详情。首次内容读取失败使用 `LoadFailure` 在原位重试，复制失败使用按钮内反馈；后台刷新失败保留已加载内容，不把暂时不可用显示为空库。
 
+Settings saves use a deliberate inline-error exception: retain the draft and editing position, show a retryable save-failure notice, and offer ErrorModal details on demand. Do not move focus into an error dialog automatically while the user is editing.
+
 ```typescript
 try {
   await someOperation();
@@ -153,12 +155,14 @@ import { ArrowLeft, Trash2, Share2 } from "lucide-react";
 
 ## Testing Requirements
 
-**Current state**: No frontend tests exist.
+`npm run test:ui` runs eight offline browser scripts covering library/reading, settings, task recovery/consistency, errors, and summary templates. Start Vite first and set `BINOTE_TEST_URL` to its loopback address; `BINOTE_QA_DIR` isolates evidence. The fixture is injected by `scripts/verify-ui.cjs`, never bundled in the application.
 
-**Recommended minimum**:
-- Component tests for `ErrorModal`, `ConfirmModal` (render, interaction)
-- Integration tests for `lib/tauri.ts` mock invoke
-- E2E tests for critical flows (add note, view note, settings)
+- Assert invoke payloads and observable UI state, not only element presence. Include config reload, stale responses, retained drafts, and invalid-save blocking.
+- Use explicit request gates for races rather than relying on timing sleeps.
+- Template fixtures obtain built-in instruction text from the Rust source; production UI obtains it from the typed metadata invoke. Do not turn sample text into a second prompt authority.
+- Capture resting screenshots after fonts and finite animations settle; an opacity transition frame is not contrast evidence.
+- Test desktop, narrow mobile, keyboard focus, destructive-action cancellation and reduced motion. Device emulation/reflow is not native Android/WebView or physical-keyboard testing.
+- Report missing LSP tools rather than claiming zero diagnostics. Strict `tsc`/`npm run build` and browser regressions remain executable checks; this project does not currently define a separate lint script.
 
 ---
 

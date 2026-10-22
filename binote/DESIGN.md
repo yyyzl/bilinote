@@ -10,11 +10,19 @@
 
 设置以两个连续步骤组织：视频转录包含字幕优先、B站登录和 ASR；AI 笔记生成包含 API/Codex、模型、连接测试和自动产物。并发上限放在底部，转录与 AI 生成分别使用该值，重启后生效。桌面初始窗口调整为 1280×900，缩小时切换响应式布局。
 
+## 总结模板管理
+
+2026-10-22：用户确认的模板界面已接入正式 Settings，原型与证据保存在 `.trellis/tasks/10-22-custom-summary-templates/`。AI 笔记生成栏提供默认选择与「管理模板」入口；管理器是同一 `#/settings` 路由下的全宽局部视图，不增加顶级导航。桌面使用最高 480px 的独立滚动模板库和编辑器，手机使用「正在编辑」选择器。编辑对象与全局默认独立，新建或复制只读内置模板会聚焦名称，不自动设为默认。
+
+`SummaryTemplateSettings.tsx` 只负责交互，模板数组和默认 ID 属于 Settings 的 AppConfig 草稿。所有修改复用唯一的「保存设置」，内部返回和模板切换保留草稿；删除默认模板与回退 `null` 是同一次待保存修改。保存失败原位提示，可按需打开 ErrorModal 详情；点击时的不可变快照不会被后续编辑改写，晚到成功也不会覆盖新草稿。
+
+`lib/tauri.ts` 镜像 `SummaryTemplate`、`SummaryTemplateDefaults`、`SummaryTemplateLimits`，通过 `get_summary_template_defaults` 读取内置正文与限制，不在前端复制另一份提示词。元数据读取失败阻止保存并可重试。校验在 `lib/summary-templates.ts`，字符计数与空白判定对应 Rust；后端保存和生成校验仍为权威。
+
 ## 数据与异步边界
 
 总结和 preview 由同一次请求生成，API 与 Codex 共用提示词；三个总结落盘入口使用统一解析器。preview 可选，旧 Note 无需迁移，完整预览存储后由 CSS 单行省略；没有预览时显示转录摘录。详见 [跨层契约](../.trellis/spec/backend/summary-preview-contract.md)。
 
-总结正文逐字保留原完整提示词的章节、顺序、图标、金句提取和转录质量警告，仅在其后追加 JSON 返回格式与 preview 要求。列表的纯文字设计只约束预览展示；思维导图提示词保持独立。完整原文回归基线保存在 `src-tauri/src/testdata/summary_prompt_original.md`。
+未选自定义模板时，总结正文逐字保留原完整提示词的章节、顺序、图标、金句提取和转录质量警告，仅在其后追加 JSON 返回格式与 preview 要求。自定义模板只改变正文组织方式，标题/转录、来源约束、质量警告和 JSON/preview 契约仍由应用控制。任务入队前仅捕获模板快照，不改变其他配置的读取时机；已有笔记不自动改写。列表的纯文字设计只约束预览展示；思维导图提示词保持独立。完整原文回归基线保存在 `src-tauri/src/testdata/summary_prompt_original.md`。
 
 路由卸载不取消后台任务，回来通过 list_tasks 恢复。阅读页使用路由版本丢弃迟到的笔记/生成返回；二维码请求使用会话标识，关闭后不能再次启动轮询。DialogFrame 统一 Escape、焦点和滚动管理。
 
@@ -36,7 +44,7 @@
 - `npm run test:unit`：Rust 单元测试，总进程限时 60 秒；冷缓存时先 `cargo test --lib --no-run` 编译。
 - 先 `npm run dev -- --host 127.0.0.1`，再 `npm run test:ui`：浏览器注入离线 Tauri 桥接，断言调用参数、任务恢复、错误路径及响应式视图。正式产品不包含样例或演示开关。
 - 浏览器测试需要 Playwright 与浏览器；优先本地 Playwright，否则使用宿主已提供的运行库。可用 `BINOTE_PLAYWRIGHT_MODULE`、`BINOTE_BROWSER_PATH` 指定路径，`BINOTE_TEST_URL` 修改地址，`BINOTE_QA_DIR` 修改截图目录。默认结果写入已忽略的 `test-results/ui/`。
-- `verify-interactions.cjs` 增加慢请求、初始读取失败、保存竞争、登录刷新、取消/重试、复制失败、减少动效及导图恢复场景；与原有脚本合计 28 类回归。`verify-inline-tasks.cjs` 另加 4 类任务信息架构回归，验证无独立任务导航、展开不写路由或历史、可继续操作笔记、失败入口及手机布局。`verify-flat-layout.cjs` 再加 3 类扁平布局回归，`verify-task-recovery.cjs` 覆盖慢速恢复、失败重试和分享等待，`verify-task-consistency.cjs` 覆盖记录移除/重试跨页与并行生成乱序读取，当前合计 43 类。
+- `verify-interactions.cjs` 增加慢请求、初始读取失败、保存竞争、登录刷新、取消/重试、复制失败、减少动效及导图恢复场景；与原有脚本合计 28 类回归。`verify-inline-tasks.cjs` 另加 4 类任务信息架构回归，验证无独立任务导航、展开不写路由或历史、可继续操作笔记、失败入口及手机布局。`verify-flat-layout.cjs` 再加 3 类扁平布局回归，`verify-task-recovery.cjs` 覆盖慢速恢复、失败重试和分享等待，`verify-task-consistency.cjs` 覆盖记录移除/重试跨页与并行生成乱序读取，上述脚本合计 43 类；`verify-summary-templates.cjs` 再覆盖 12 类模板管理、校验、保存/账号竞争、元数据失败与响应式回归，当前合计 55 类。
 - `cargo build` 验证 Windows 原生编译。本次离线测试不能代替真实 B站、模型连接或 Android / macOS 实机测试。
 
 任务恢复成功前禁用新提交与生成；分享保留在队列，恢复成功再消费。读取失败可原位重试，正文继续可读。阅读页按笔记 ID 标记就绪，切笔记后必须重新恢复，防止旧页状态放行新任务。

@@ -1,8 +1,11 @@
 use crate::codex::CodexClient;
 use crate::error::{AppError, Result};
-use crate::llm::{build_mindmap_prompt, build_summary_prompt, clean_mindmap, LlmClient};
+use crate::llm::{
+    build_mindmap_prompt, build_summary_prompt_with_template, clean_mindmap, LlmClient,
+};
 use crate::retry::RetryContext;
 use crate::store::AppConfig;
+use crate::summary_templates::SummaryTemplateSnapshot;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
@@ -17,11 +20,12 @@ pub enum LlmProvider {
 #[derive(Clone)]
 pub enum GenerationClient {
     Api(LlmClient),
-    Codex(CodexClient),
+    Codex(CodexClient, SummaryTemplateSnapshot),
 }
 
 impl GenerationClient {
     pub fn from_config(config: &AppConfig, work_dir: PathBuf) -> Result<Self> {
+        let template = SummaryTemplateSnapshot::capture(config);
         match config.llm_provider {
             LlmProvider::Api => {
                 let key = config
@@ -29,24 +33,37 @@ impl GenerationClient {
                     .as_ref()
                     .filter(|key| !key.trim().is_empty())
                     .ok_or_else(|| AppError::LlmError("未配置 LLM API Key".into()))?;
-                Ok(Self::Api(LlmClient::new(
-                    key.clone(),
-                    config
-                        .llm_base_url
-                        .clone()
-                        .unwrap_or_else(|| "https://api.openai.com/v1".into()),
-                    config
-                        .llm_model
-                        .clone()
-                        .unwrap_or_else(|| "gpt-4o-mini".into()),
-                )))
+                Ok(Self::Api(
+                    LlmClient::new(
+                        key.clone(),
+                        config
+                            .llm_base_url
+                            .clone()
+                            .unwrap_or_else(|| "https://api.openai.com/v1".into()),
+                        config
+                            .llm_model
+                            .clone()
+                            .unwrap_or_else(|| "gpt-4o-mini".into()),
+                    )
+                    .with_summary_template(template),
+                ))
             }
-            LlmProvider::Codex => Ok(Self::Codex(CodexClient::new(
-                config.codex_model.clone().unwrap_or_default(),
-                config.codex_path.clone(),
-                config.codex_fast,
-                work_dir,
-            )?)),
+            LlmProvider::Codex => Ok(Self::Codex(
+                CodexClient::new(
+                    config.codex_model.clone().unwrap_or_default(),
+                    config.codex_path.clone(),
+                    config.codex_fast,
+                    work_dir,
+                )?,
+                template,
+            )),
+        }
+    }
+
+    pub(crate) fn with_summary_template(self, template: SummaryTemplateSnapshot) -> Self {
+        match self {
+            Self::Api(client) => Self::Api(client.with_summary_template(template)),
+            Self::Codex(client, _) => Self::Codex(client, template),
         }
     }
 
@@ -62,10 +79,10 @@ impl GenerationClient {
                     .summarize_with_retry(transcript, title, on_retry)
                     .await
             }
-            Self::Codex(client) => {
-                client
-                    .generate(&build_summary_prompt(title, transcript), |_| {})
-                    .await
+            Self::Codex(client, template) => {
+                let prompt =
+                    build_summary_prompt_with_template(title, transcript, template.instructions()?);
+                client.generate(&prompt, |_| {}).await
             }
         }
     }
@@ -83,10 +100,10 @@ impl GenerationClient {
                     .summarize_stream_with_retry(transcript, title, on_retry, on_progress)
                     .await
             }
-            Self::Codex(client) => {
-                client
-                    .generate(&build_summary_prompt(title, transcript), on_progress)
-                    .await
+            Self::Codex(client, template) => {
+                let prompt =
+                    build_summary_prompt_with_template(title, transcript, template.instructions()?);
+                client.generate(&prompt, on_progress).await
             }
         }
     }
@@ -104,13 +121,17 @@ impl GenerationClient {
                     .generate_mindmap_stream_with_retry(transcript, title, on_retry, on_progress)
                     .await
             }
-            Self::Codex(client) => client
+            Self::Codex(client, _) => client
                 .generate(&build_mindmap_prompt(title, transcript), on_progress)
                 .await
                 .map(|text| clean_mindmap(&text)),
         }
     }
 }
+
+#[cfg(test)]
+#[path = "summary_template_generation_tests.rs"]
+mod summary_template_tests;
 
 #[cfg(test)]
 mod tests {

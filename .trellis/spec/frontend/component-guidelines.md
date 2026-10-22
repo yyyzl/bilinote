@@ -186,6 +186,7 @@ export default function Modal({
 - 阅读页传 `reader`，手机保留内容操作栏并为它预留底部安全区；普通页面不再为导航预留 100px。HashRouter 内的目录使用 `scrollIntoView`，不要使用会改写路由的 fragment 链接。
 - 笔记列表不依赖封面、不在标题前填装饰图标。`lib/note-preview.ts::getNotePreview(note)` 优先 `preview`，回退可读转录；UI 单行省略，保存完整文字。
 - 设置按视频转录、AI 笔记生成分两栏，自动产物开关属于 AI 栏；640px 以下垂直排列。
+- Summary-template management is a full-width local Settings view, not a new top-level route. Keep its entry/default selector in the AI group; use a bounded 480px desktop library and a labeled mobile editing selector. Editing selection must not change the generation default. Reuse the parent's Save action and ConfirmModal; source built-in text/limits from backend metadata.
 - `.panel`、`.input-shell`、三种 `.button-*`、`.icon-button` 是共享样式。旧 `.editorial-*` 仅供现有弹窗复用，外观已统一为白底、绿色边框和圆角。
 - `DialogFrame` 管理 Escape、焦点约束、关闭后焦点恢复和背景滚动。阅读标签支持左右方向键、Home / End。
 - 后台任务属于笔记库局部区域，使用摘要加原位展开列表，不增加独立导航或模态遮罩。展开期间仍可操作笔记；失败任务也必须有入口。仅扫码、确认和错误使用 DialogFrame。

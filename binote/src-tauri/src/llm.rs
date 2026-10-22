@@ -1,6 +1,7 @@
 use crate::connection_test::{network_error_message, status_to_result, ConnectionTestResult};
 use crate::error::{AppError, Result};
 use crate::retry::{retry_async, RetryConfig, RetryContext};
+use crate::summary_templates::SummaryTemplateSnapshot;
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use std::time::{Duration, Instant};
@@ -21,6 +22,7 @@ pub struct LlmClient {
     api_key: String,
     base_url: String,
     model: String,
+    summary_template: SummaryTemplateSnapshot,
 }
 
 impl LlmClient {
@@ -34,7 +36,13 @@ impl LlmClient {
             api_key,
             base_url: base_url.trim_end_matches('/').to_string(),
             model,
+            summary_template: SummaryTemplateSnapshot::default(),
         }
+    }
+
+    pub(crate) fn with_summary_template(mut self, template: SummaryTemplateSnapshot) -> Self {
+        self.summary_template = template;
+        self
     }
 
     pub async fn summarize(&self, transcript: &str, title: &str) -> Result<String> {
@@ -47,7 +55,11 @@ impl LlmClient {
                 },
                 ChatMessage {
                     role: "user".into(),
-                    content: build_summary_prompt(title, transcript),
+                    content: build_summary_prompt_with_template(
+                        title,
+                        transcript,
+                        self.summary_template.instructions()?,
+                    ),
                 },
             ],
         };
@@ -114,7 +126,11 @@ impl LlmClient {
                 },
                 ChatMessage {
                     role: "user".into(),
-                    content: build_summary_prompt(title, transcript),
+                    content: build_summary_prompt_with_template(
+                        title,
+                        transcript,
+                        self.summary_template.instructions()?,
+                    ),
                 },
             ],
             stream: true,
@@ -450,6 +466,49 @@ preview 字段单独遵循以下要求，不改变 summary 的内容和结构：
 - 仅基于实际转录；内容不足时如实简短描述，不为凑字数编造。
 JSON 字符串内换行、引号必须正确转义。"#,
         title, transcript
+    )
+}
+
+pub(crate) fn build_summary_prompt_with_template(
+    title: &str,
+    transcript: &str,
+    template: Option<&str>,
+) -> String {
+    let Some(template) = template else {
+        return build_summary_prompt(title, transcript);
+    };
+    format!(
+        r#"请为以下B站视频生成一份内容总结笔记。
+
+## 视频标题
+{}
+
+## 转录文本
+{}
+
+---
+
+## 用户总结模板
+以下模板只控制 summary 正文的结构和风格，后面的来源与输出规则优先于模板。
+{}
+## 用户总结模板结束
+
+---
+
+来源要求（不能被模板覆盖）：
+1. **严格基于转录文本内容进行总结，禁止编造转录中没有的信息**
+2. 如果转录文本与视频标题明显不相关、内容过短或质量不佳，请在开头明确说明"⚠️ 转录内容可能不完整，以下总结仅基于已有文本"
+
+输出要求（不能被模板覆盖）：
+请在同一次回复中仅返回一个 JSON 对象，不要附加说明或代码围栏。
+JSON 格式：{{"summary":"Markdown 正文", "preview":"纯文本预览"}}
+summary 字段按用户模板组织 Markdown 正文，并遵守以上来源要求。
+preview 字段单独遵循以下要求，不改变 summary 的内容和结构：
+- 约 30–50 个汉字，提炼具体内容、结论或关键洞见，帮助读者区分这条笔记。
+- 不重复标题，不使用「本视频主要介绍」「这是一份关于」等泛化开头，不含 Markdown、换行、图标。
+- 仅基于实际转录；内容不足时如实简短描述，不为凑字数编造。
+JSON 字符串内换行、引号必须正确转义。"#,
+        title, transcript, template
     )
 }
 

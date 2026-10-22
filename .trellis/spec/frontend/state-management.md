@@ -68,7 +68,7 @@ await api.saveConfig(config);
 await api.deleteNote(id);
 ```
 
-**Key principle**: Frontend state is a cache of backend state. After mutations, always re-fetch to ensure consistency.
+**Key principle**: Frontend state is a cache of backend state. Re-fetch backend-owned collections after mutations. Editable Settings drafts are an exception: advance the saved baseline to the submitted snapshot without replacing newer local edits (see the Settings contracts below).
 
 ```typescript
 // After delete, re-fetch the list
@@ -260,7 +260,7 @@ const [loading, setLoading] = useState(false);
 
 ## 配置读取、登录刷新与保存快照
 
-`Settings.loadConfig(refreshLogin = false)` 同时读取 `get_config` 和 `supports_codex`，成功前不展示可编辑的默认配置，也不允许 `save_config`。读取失败在原位重试。
+`Settings.loadConfig(refreshLogin = false)` 同时读取 `get_config`、`supports_codex` 和 `get_summary_template_defaults`，成功前不展示可编辑的默认配置，也不允许 `save_config`。读取失败在原位重试。
 
 - `savedConfigRef` 保存服务器基线，`currentConfigRef` 保存当前编辑，`loadRequestRef` 拒绝迟到的读取结果。
 - 有未保存编辑时，只更新尚未编辑的 `bilibili_sessdata`、`bilibili_bili_jct`、`bilibili_refresh_token`、`bilibili_dede_user_id`、`bilibili_cookie_ts`；扫码成功或主动退出传 `true`，以新登录结果替换这些字段，保留其他编辑。
@@ -268,6 +268,32 @@ const [loading, setLoading] = useState(false);
 - 保存先同步加锁，再捕获配置快照；完成后基线更新为实际发送的快照。保存中继续编辑时，成功提示不能将后续编辑误标为已保存。
 
 Good：编辑模型 → 扫码刷新账号 → 模型编辑保留，新会话随下次保存；Base：初次读取成功后保存；Bad：读取失败不能保存默认值，迟到读取不能覆盖编辑。对应可执行回归为 `binote/scripts/verify-interactions.cjs` 的配置慢读取、保存中编辑与登录刷新场景。
+
+## Summary Template Draft Contract
+
+Files: `src/pages/Settings.tsx`, `src/components/SummaryTemplateSettings.tsx`, `src/lib/summary-templates.ts`, `src/lib/tauri.ts`.
+
+- Persist `summary_templates: SummaryTemplate[]` and `default_summary_template_id: string | null` through `save_config({ config })`. Null selects the immutable built-in; it is not an item in the persisted array.
+- Fetch `get_summary_template_defaults() -> { name, content, limits: { max_templates, max_id_bytes, max_name_chars, max_content_chars } }` with the guarded config load. Never embed another production copy of the built-in prompt or substitute a fallback when metadata fails.
+- Parent Settings owns drafts, saved baseline, editing ID and local management view. `SummaryTemplateSettings` receives `templates/defaultId/defaults/editingId/onSelect/onChange/validation`; it does not invoke saves. Navigating within Settings must not remount the draft owner or write the route.
+- Editing ID is separate from the default ID. Creation/copy uses the metadata content and focuses the name; neither changes the default.
+- Replace arrays and changed entries immutably. A shallow top-level save snapshot is safe **only** while its nested arrays/objects are never mutated. Synchronize the current ref and dirty ref before publishing template edits.
+- Confirmation deletes an entry and clears its selected default to null in the same draft. Do not save automatically or touch notes. Show the fallback in the confirmation.
+- Native `<select>` may use `""` as a UI-only alias for null. A persisted empty/dangling ID must remain visibly invalid; use a distinct missing option so the user can explicitly select the built-in. Never silently normalize a dangling reference.
+- Save is blocked in both button and handler until metadata/config are loaded and validation passes. Failed saves retain inputs and expose an inline retryable notice, with technical detail available through ErrorModal. Completion advances only the submitted baseline, not newer drafts.
+
+Validation uses backend metadata limits. `validateSummaryTemplates(templates, defaultId, limits)` returns `valid/message/selectionError/fields: Map<string, TemplateFieldErrors>`. Use `Array.from(text).length` for Unicode scalar counting and Unicode `White_Space` for Rust-compatible trim checks; JS `trim()` differs for U+0085 and U+FEFF. Do not set UTF-16-based HTML maxlength or trim stored content. IDs are ASCII-only; names are unique after trim, case-sensitive. Backend validation remains authoritative; see [storage contract](../backend/database-guidelines.md).
+
+| Case | Required result / assertion |
+| --- | --- |
+| Base: legacy empty library / null default | Read-only built-in is visible, no implicit write |
+| Good: new/copy, edit, save, reload | Exact submitted text/default retained; editor and default remain independent |
+| Good: account refresh with edits / edit during save | New account fields merge; templates stay dirty; submitted snapshot unchanged |
+| Bad: blank/duplicate/over-limit field or dangling ID | Visible error, save disabled, no invoke |
+| Bad: metadata failure / save rejection | Retry load or save; no invented built-in or discarded draft |
+| Delete selected custom template | Cancel focused; Escape restores focus; one save includes removal and null fallback |
+
+Executable regression: `scripts/verify-summary-templates.cjs` (included in `npm run test:ui`), plus existing `verify-interactions.cjs`. Use isolated invoke fixtures and deterministic gates, not real accounts, app data or paid generation. Browser fixture checks do not establish native invoke coverage.
 
 ## 局部展开状态与路由
 
