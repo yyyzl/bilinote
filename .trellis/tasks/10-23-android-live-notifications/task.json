@@ -1,0 +1,44 @@
+{
+  "id": "android-live-notifications",
+  "name": "android-live-notifications",
+  "title": "Android 实时任务通知与流体云适配",
+  "description": "",
+  "status": "in_progress",
+  "dev_type": "fullstack",
+  "scope": "android-notifications",
+  "priority": "P2",
+  "creator": "pi-agent",
+  "assignee": "pi-agent",
+  "createdAt": "2026-10-23",
+  "completedAt": null,
+  "branch": "feat/android-live-notifications",
+  "base_branch": "v0.6.0",
+  "worktree_path": "G:/AndroidAPP/biliGPT-live-notifications",
+  "current_phase": 2,
+  "next_action": [
+    {
+      "phase": 1,
+      "action": "implement"
+    },
+    {
+      "phase": 2,
+      "action": "check"
+    },
+    {
+      "phase": 3,
+      "action": "finish"
+    },
+    {
+      "phase": 4,
+      "action": "create-pr"
+    }
+  ],
+  "commit": null,
+  "pr_url": null,
+  "subtasks": [],
+  "children": [],
+  "parent": null,
+  "relatedFiles": [],
+  "notes": "User approved branch-only GitHub push and signed Android Release APK preview. Synced onto v0.6.0; no main merge/tag/Release/Latest change. Integrated checks: 55 Rust tests and all 8 UI suites passed; native tests and release lintVital passed. Awaiting Find X8 acceptance. See preview-build.md.",
+  "meta": {}
+}

@@ -1,0 +1,25 @@
+# Design — Android Live Task Notifications
+
+## Architecture
+Rust task registry -> process-owned 1-second publisher -> atomic private `.live_task_state.json` -> existing Android foreground service poll -> standard native Notification with optional promotion -> explicit PendingIntent -> existing WebView notification bridge.
+
+The existing `.task_running` RAII flag remains authoritative for foreground service lifetime. A separate structured snapshot avoids modifying every task exit and maintains task lifetime independent of Activity/WebView visibility. `emit_progress` also updates the registry using the unchanged message/event contract, so all phases are observable. Publisher runs only on Android and stops/cleans on global cancellation.
+
+## Snapshot v1
+Fields: `version:1`, `session_id:string` (UUID, stable for a contiguous nonempty batch), `task_id:string`, `note_id:string|null`, `stage:string` (finite safe stage vocabulary), `active_count:integer`, `queued_count:integer`, `updated_at:integer` (Unix seconds). Choose oldest running task before queued tasks, then created_at/task_id for deterministic ordering. Omit terminal tasks. Never publish transcript, title, URL, API errors/credentials, or invented percentages. Regenerate session_id after all tasks end; keep it stable when selected task changes. Observe the existing RAII flag's modification timestamp to distinguish a 0→1 task batch even when the idle interval occurs between snapshot ticks.
+
+Good: running + queued yields one aggregate notification with accurate counts and current selected note. Base: single queued task yields a standard waiting notification. Bad: malformed/version-mismatched/stale (>10s)/future (>5s) snapshot yields a generic ordinary foreground notification, not a promoted activity. Atomic replacement prevents partial reads. Publisher I/O failures are logged without interrupting tasks. Freshness is a heartbeat, not per-token notification churn.
+
+## Android
+- Retain current MainActivity share/back/battery and TranscribeService keepalive behavior as versioned source under `binote/android/` (currently existing only in ignored generated files).
+- Sync canonical Kotlin, manifest and tests into Tauri-generated project with `scripts/sync-android.cjs`; Android-specific Tauri hooks and release CI call it. Never track generated Gradle files/keys/local.properties.
+- Use Notification.Builder with standard template, nonempty title, ongoing, onlyAlertOnce, PRIVATE lockscreen visibility and LOW channel (not MIN). On API>=36, request promotion using documented `android.requestPromotedOngoing` extra (the installed API36 SDK has no Builder setter, but supports canPostPromotedNotifications and setShortCriticalText). Check manager permission; queued-only/generic state is not promoted.
+- A non-exported dismissal BroadcastReceiver records session_id. Service does not republish updates for a dismissed session; a genuinely new batch can show again. System permission changes re-evaluated each poll.
+- PendingIntent carries explicit validated note ID, unique task URI, immutable flag. No shared completion-navigation file for ongoing notifications. Missing note uses reserved `@tasks` bridge target; React routes it to `/`. Cold-start buffering remains intact. No changes to completion plugin semantics.
+- API<36 and denied promotion remain standard ongoing notifications. No private APIs, custom RemoteViews or runtime promotion permission dialog. Prefer non-colorized notifications. API36 source/testing revealed that early Android 16 requires colorization for eligibility, unlike newer revisions: check the public `hasPromotableCharacteristics()` first, and accept a legacy colorized candidate only if that API approves it. Do not infer this from OEM/version strings.
+
+## Analysis / Risks
+The worktree graph analyze timed out during first index; the available `bilinote` graph matches the baseline symbols and was used via CLI because MCP tools are not exposed. `emit_progress`: HIGH, 7 direct callers, 3 affected process groups (transcription, credential retry, summary); user warned before edits. `run`: LOW, main caller; `update_stream_progress`: LOW, 3 callers; NotificationNavProvider: LOW, App caller. Kotlin symbols are absent because generated Android sources were ignored: UNKNOWN graph coverage, source inspection confirms lifecycle/click/keepalive coupling; treat as medium practical risk. Do not claim missing edges mean no impact.
+
+## Validation
+Rust tests exercise selection, terminal filtering, sanitization, atomic publisher/session lifecycle and registry progress updates. Node tests exercise repeatable clean-project syncing and notification navigation. Robolectric tests exercise API35 fallback/API36 characteristics, snapshot parsing, unique navigation intents, dismissal/session reset and service stop lifecycle. Android compilation/lint plus frontend regression and full Rust tests. No adb device connected; OEM rendering/locked-screen/battery/permission-denied behavior remains a documented Find X8 acceptance checklist.

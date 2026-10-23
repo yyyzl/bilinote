@@ -106,11 +106,16 @@ pub struct ProgressPayload {
 
 /// 发送带 task_id 的进度事件。
 fn emit_progress(app: &AppHandle, event: &str, task_id: &str, message: impl Into<String>) {
+    let message = message.into();
+    {
+        let state = app.state::<AppState>();
+        crate::live_notification::record_progress(&mut state.tasks.lock().unwrap(), task_id, &message);
+    }
     let _ = app.emit(
         event,
         ProgressPayload {
             task_id: task_id.to_string(),
-            message: message.into(),
+            message,
         },
     );
 }
@@ -1122,12 +1127,6 @@ async fn transcribe_background(
 /// 两条通道文案一致，避免 poll 与事件互相覆盖造成闪烁。
 fn update_stream_progress(app: &AppHandle, task_id: &str, event: &str, label: &str, chars: usize) {
     let msg = format!("{} · 已生成 {} 字", label, chars);
-    let state = app.state::<AppState>();
-    if let Ok(mut tasks) = state.tasks.lock() {
-        if let Some(info) = tasks.get_mut(task_id) {
-            info.progress = msg.clone();
-        }
-    }
     emit_progress(app, event, task_id, msg);
 }
 

@@ -16,6 +16,7 @@ import { useNavigate } from "react-router-dom";
 import {
   registerNavHandler,
   unregisterNavHandler,
+  notificationRoute,
 } from "../lib/notification-nav";
 
 export function NotificationNavProvider({
@@ -28,10 +29,8 @@ export function NotificationNavProvider({
   // 通知点击处理：导航到笔记详情页
   const handleNotificationNav = useCallback(
     (noteId: string) => {
-      const normalizedNoteId = noteId.trim();
-      if (normalizedNoteId) {
-        navigate(`/note/${normalizedNoteId}`);
-      }
+      const route = notificationRoute(noteId);
+      if (route !== null) navigate(route);
     },
     [navigate],
   );

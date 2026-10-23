@@ -19,6 +19,15 @@
  */
 let pendingNoteId: string | null = null;
 
+/** Native ongoing notifications use this target before a note has been saved. */
+export const TASK_LIST_NAV_TARGET = "@tasks";
+
+export function notificationRoute(target: string): string | null {
+  const id = target.trim();
+  if (id === TASK_LIST_NAV_TARGET) return "/";
+  return /^[A-Za-z0-9_-]{1,64}$/.test(id) ? `/note/${id}` : null;
+}
+
 /**
  * React 回调函数
  * 由 NotificationNavProvider 注册，用于处理导航

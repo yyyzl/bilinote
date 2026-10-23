@@ -187,6 +187,12 @@ jobs:
       - name: Tauri Android init
         run: npx tauri android init
 
+      - name: Restore versioned Android sources
+        run: node scripts/sync-android.cjs
+
+      - name: Verify live notification contracts
+        run: node --test scripts/android-live-notifications.test.cjs
+
       - name: Verify signing contract tests
         run: npm run test:android-signing
 
@@ -209,6 +215,10 @@ jobs:
 
       - name: Build Android APK (Rust + Gradle)
         run: npx tauri android build --target aarch64 --apk true
+
+      - name: Test native live notifications
+        working-directory: binote/src-tauri/gen/android
+        run: ./gradlew :app:testArm64DebugUnitTest -x rustBuildArm64Debug --console=plain
 
       - name: Sign and align APK
         id: sign_apk

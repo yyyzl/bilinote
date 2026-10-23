@@ -6,6 +6,7 @@ pub mod codex;
 pub mod connection_test;
 pub mod error;
 pub mod generation;
+mod live_notification;
 pub mod llm;
 pub mod notification;
 pub mod retry;
@@ -55,6 +56,8 @@ pub fn run() {
                 println!("[BiNote] task flag path = {:?}", flag_path);
             }
             commands::set_task_flag_file(app.handle(), false);
+            #[cfg(target_os = "android")]
+            live_notification::start(app.handle().clone());
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
