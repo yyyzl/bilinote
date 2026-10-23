@@ -1,5 +1,10 @@
 # Verification / Device Handoff
 
+## Current delivery — signed Release preview on v0.6.0
+The v0.5.4 debug artifact/results below are historical. The current user-approved branch-only GitHub delivery is recorded in [preview-build.md](./preview-build.md): app commit `76da557`, successful Actions run `39986274722`, verified normal arm64 Release APK **22,037,759 bytes**. It includes v0.6.0 templates. Main/Latest were not changed. GitNexus indexing and pre-commit scope checks now work; all integrated regressions and cloud native/signing gates passed. Find X8 device acceptance remains open.
+
+## Historical MVP checks (before v0.6.0 synchronization)
+
 ## Branch and scope
 - Branch: `feat/android-live-notifications`
 - Worktree: `G:/AndroidAPP/biliGPT-live-notifications`

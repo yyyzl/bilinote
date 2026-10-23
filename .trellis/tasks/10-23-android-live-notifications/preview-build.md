@@ -32,5 +32,18 @@ The independent worktree GitNexus rebuild completed: alias `binote-live-notifica
 ## First CI run and repair
 Run `39984307896` at `072597c` compiled the Release APK successfully but stopped before signing/upload: Robolectric's API36 sandbox rejected GitHub's Java17 (`DefaultSdkProvider.java:174`). Confirmed against Robolectric 4.17 published source: SDK36's requiredJavaVersion is 21. Local passing tests used Java21. Added a failing Node regression for the Android workflow Java version, then changed only that job to JDK21; kept all native tests and signing gates enabled. No Android runtime/business logic change.
 
+## Verified delivery
+- App/CI commit: `76da5571bb29504f613eb2509c67a0171a38987f` (feature commit `072597c`, Java21 repair `76da557`).
+- Actions success: https://github.com/yyyzl/bilinote/actions/runs/39986274722
+- Artifact: https://github.com/yyyzl/bilinote/actions/runs/39986274722/artifacts/12516027438 (`BiNote-Android`; GitHub sign-in may be required).
+- Local verified file: `G:/AndroidAPP/biliGPT-live-notifications/binote/BiNote_0.6.0_live_76da557_arm64.apk`.
+- Size: **22,037,759 bytes**, about 22.04 MB / 21.02 MiB. The Actions artifact ZIP itself is smaller; do not confuse its digest with the APK digest.
+- APK SHA256: `F33C29FFDEE7381D52B578E6770C26FC8168DD28EF037BBE92D69A96B8A09806`.
+- Package `com.binote.app`, versionName `0.6.0`, versionCode `6000`, minSdk24, targetSdk36, native ABI only `arm64-v8a`; aapt reports no application-debuggable flag.
+- Actual downloaded APK passed apksigner and the project legacy-certificate gate locally, plus zipalign validation. Rust native library is 19,420,816 bytes rather than the debug build's 177 MB library.
+- Android Release build, API35/36 native tests, signing and artifact upload all succeeded in CI. Windows, macOS and Publish GitHub Release jobs were skipped.
+- Remote main remains `62837d4`; Latest remains v0.6.0, release ID421104819 / original publication time unchanged. No release/tag/main merge was performed.
+- Install only by update/replacement, retaining app data. Do not uninstall or clear data to bypass conflicts. Actual phone upgrade and Fluid Cloud presentation have not been tested.
+
 ## CI acceptance
-Record the commit, Actions URL, final APK metadata, size, hash and original-certificate result in the user handoff. A successful build/eligibility test does not prove Find X8/ColorOS17 promotion. Failure must not be hidden by skipping relevant tests, replacing signing keys, or publishing an unverified APK.
+A successful build/eligibility test does not prove Find X8/ColorOS17 promotion. User should test background/locked states, actual stage updates, warm/cold taps, completion/failure/cancel cleanup, concurrent work, permission fallback and dismissal/new batch. Full Android lint retains documented non-vital inherited TV issues; do not conflate passing lintVital with all lint passing.

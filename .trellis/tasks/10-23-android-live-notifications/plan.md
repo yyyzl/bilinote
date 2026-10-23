@@ -26,10 +26,10 @@ One end-to-end MVP slice in this run: a usable ongoing task notification with pr
 - [x] Write Robolectric tests for parsing, fallback/promotion, dismissal and intent identity; sync and run `./gradlew.bat :app:testArm64DebugUnitTest -x rustBuildArm64Debug` from `binote/src-tauri/gen/android` and observe expected missing-feature failures.
 - [x] Implement native notification lifecycle plus minimal task navigation. Repeat Node and native tests; add cases for any discovered integration gaps before fixing.
 - [x] Run `npm run build`, `npm run test:ui`, `npm run test:android-signing`, `cargo test --lib`, Android compilation/lint, configured LSP diagnostics and diff checks. Record unavailable checks exactly.
-- [ ] Complete GitNexus detect-changes after worktree indexing (currently unavailable). Manual HIGH-risk/cross-layer scope review, specs and checkpoint are complete. No commit/install/release.
+- [x] Worktree GitNexus index and pre-commit detect-changes completed, with CRITICAL aggregate scope disclosed and reviewed. Source and CI fix committed/pushed only to the feature branch; signed Release preview built and verified. No install, main merge or public Release.
 
 ## Risks / Watch Items
-User settings/OEM can refuse promotion. Android source is currently ignored and must survive regeneration. Do not transfer original uncommitted templates or touch original checkout. No secrets in logs/fixtures. Build/test dependencies may need network. OEM success requires Find X8 testing.
+User settings/OEM can refuse promotion. Canonical Android sources are tracked under `binote/android/` and must survive regeneration. Released v0.6.0 templates were integrated with user approval without modifying the original checkout. No secrets in logs/fixtures. Full lint retains inherited TV issues; OEM success requires Find X8 testing.
 
-## Ready to Execute
-Start Slice 1, budget 1. Product scope already approved in conversation. No blocking product decisions.
+## Current Handoff
+Slice 1 and branch-only preview delivery are complete; see preview-build.md. Await physical-device acceptance. Do not merge main, tag, publish or install without further user instruction.

@@ -33,12 +33,18 @@
       "action": "create-pr"
     }
   ],
-  "commit": null,
+  "commit": "76da5571bb29504f613eb2509c67a0171a38987f",
   "pr_url": null,
   "subtasks": [],
   "children": [],
   "parent": null,
   "relatedFiles": [],
   "notes": "User approved branch-only GitHub push and signed Android Release APK preview. Synced onto v0.6.0; no main merge/tag/Release/Latest change. Integrated checks: 55 Rust tests and all 8 UI suites passed; native tests and release lintVital passed. Awaiting Find X8 acceptance. See preview-build.md.",
-  "meta": {}
+  "meta": {
+    "preview_run_url": "https://github.com/yyyzl/bilinote/actions/runs/39986274722",
+    "preview_artifact_url": "https://github.com/yyyzl/bilinote/actions/runs/39986274722/artifacts/12516027438",
+    "preview_apk_sha256": "F33C29FFDEE7381D52B578E6770C26FC8168DD28EF037BBE92D69A96B8A09806",
+    "preview_apk_bytes": 22037759,
+    "device_acceptance": "pending"
+  }
 }
