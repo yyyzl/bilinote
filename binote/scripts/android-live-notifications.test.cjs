@@ -41,6 +41,13 @@ test('Android build hooks and CI restore tracked native sources', () => {
   assert.match(fs.readFileSync(path.join(root, '../.github/workflows/release.yml'), 'utf8'), /node scripts\/sync-android\.cjs/);
 });
 
+test('Android CI supplies the Java 21 runtime required by API 36 Robolectric', () => {
+  const workflow = fs.readFileSync(path.join(root, '../.github/workflows/release.yml'), 'utf8');
+  const androidJob = workflow.split('  build-android:')[1].split('  release:')[0];
+  assert.match(androidJob, /java-version: ['"]21['"]/);
+  assert.match(androidJob, /:app:testArm64DebugUnitTest -x rustBuildArm64Debug/);
+});
+
 function loadNav() {
   const source = fs.readFileSync(path.join(root, 'src/lib/notification-nav.ts'), 'utf8');
   const code = ts.transpileModule(source, { compilerOptions: { module: ts.ModuleKind.CommonJS } }).outputText;

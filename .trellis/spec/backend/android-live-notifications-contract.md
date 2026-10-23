@@ -85,6 +85,6 @@ From `binote/src-tauri/`: `cargo test --lib`.
 After a full Tauri Android build generates native scaffolding, from `src-tauri/gen/android/`:
 - `./gradlew :app:testArm64DebugUnitTest -x rustBuildArm64Debug`: API35/36, parser, taps, dismissal, real service phase changes/fallback/cleanup.
 - `./gradlew :app:lintArm64Debug -x rustBuildArm64Debug`; distinguish inherited manifest/generated-code warnings from feature regressions, never hide failures.
-- JVM tests use Robolectric 4.17 and export `java.base/jdk.internal.access` for the API36 FileDescriptor interceptor on modern JDKs.
+- JVM tests use Robolectric 4.17. Its Android 16/API36 sandbox requires **JDK 21** (DefaultSdkProvider rejects Java17 before tests execute); local and GitHub Android jobs must supply Java21. Also export `java.base/jdk.internal.access` for the API36 FileDescriptor interceptor. The Node contract test guards the CI Java version and native test command.
 
 Device acceptance remains mandatory: record Android API + firmware; verify notification permission/promotion denied, visible/locked/background states, concurrent work, dismissal/new batch, completion/failure/cancel cleanup, warm/cold taps and battery behavior. A passing JVM eligibility assertion does not prove OPPO promotion. Any upgrade test must follow [Android Signing](./android-signing-contract.md); never uninstall user data to work around a certificate mismatch.

@@ -19,7 +19,7 @@ User explicitly requested uploading this work to GitHub and producing a normal A
 - `npm run test:unit`: passed with the warmed existing target-test cache; first cold attempt hit the wrapper's fixed 60-second timeout, not a test assertion failure.
 - `npm run build`: passed.
 - `npm run test:ui`: all **8** suites passed, including summary-template interactions.
-- Node Android sync/navigation contracts: **4 passed**.
+- Node Android sync/navigation/CI-runtime contracts: **5 passed** after the Java21 CI fix.
 - Signing regression: **8 passed**.
 - `:app:testArm64DebugUnitTest`: passed.
 - `:app:lintVitalArm64Release`: passed.
@@ -28,6 +28,9 @@ User explicitly requested uploading this work to GitHub and producing a normal A
 
 ## Analysis
 The independent worktree GitNexus rebuild completed: alias `binote-live-notifications`, 1,799 nodes, 4,151 edges, 154 flows. Staged detect-changes succeeded: 32 expected files, 267 symbols, 25 flows; aggregate risk CRITICAL, disclosed to the user before committing. Many counted symbols are the previously ignored native baseline now tracked; this does not negate lifecycle/navigation risks. Checked affected service start/update/parser/intent/dismissal paths and Rust progress/publisher flows against the tests and source review. No unrelated template implementation changes are staged. The earlier emit_progress impact is HIGH (7 direct callers, 3 process groups); reviewed call sites remain outside registry lock scopes. Index warns some process traversal and cross-language property inference are incomplete, so absence of edges is not proof of no impact.
+
+## First CI run and repair
+Run `39984307896` at `072597c` compiled the Release APK successfully but stopped before signing/upload: Robolectric's API36 sandbox rejected GitHub's Java17 (`DefaultSdkProvider.java:174`). Confirmed against Robolectric 4.17 published source: SDK36's requiredJavaVersion is 21. Local passing tests used Java21. Added a failing Node regression for the Android workflow Java version, then changed only that job to JDK21; kept all native tests and signing gates enabled. No Android runtime/business logic change.
 
 ## CI acceptance
 Record the commit, Actions URL, final APK metadata, size, hash and original-certificate result in the user handoff. A successful build/eligibility test does not prove Find X8/ColorOS17 promotion. Failure must not be hidden by skipping relevant tests, replacing signing keys, or publishing an unverified APK.
