@@ -71,6 +71,39 @@ function getOpenableSourceUrl(note: api.Note): string {
     : `https://www.bilibili.com/video/${note.bvid}`;
 }
 
+function ReaderBackLink() {
+  const [visible, setVisible] = useState(true);
+
+  useEffect(() => {
+    // 限制在实际滚动范围内，避免触底/触顶回弹误判方向。
+    const getScrollTop = () => Math.max(0, Math.min(
+      window.scrollY,
+      document.documentElement.scrollHeight - window.innerHeight,
+    ));
+    let previousTop = getScrollTop();
+    const handleScroll = () => {
+      const top = getScrollTop();
+      if (top !== previousTop) {
+        setVisible(top === 0 || top < previousTop);
+        previousTop = top;
+      }
+    };
+    window.addEventListener("scroll", handleScroll, { passive: true });
+    return () => window.removeEventListener("scroll", handleScroll);
+  }, []);
+
+  return (
+    <Link
+      to="/"
+      className={`back-line reader-back-link${visible ? "" : " reader-back-link-hidden"}`}
+      onFocus={() => setVisible(true)}
+    >
+      <ArrowLeft size={19} aria-hidden="true" />
+      返回笔记库
+    </Link>
+  );
+}
+
 export default function NoteDetail() {
   const { id } = useParams<{ id: string }>();
   const [note, setNote] = useState<api.Note | null>(null);
@@ -424,10 +457,7 @@ export default function NoteDetail() {
     const waiting = !loaded || Boolean(note && note.id !== id);
     return (
       <AppLayout reader>
-        <Link to="/" className="back-line">
-          <ArrowLeft size={18} />
-          返回笔记库
-        </Link>
+        <ReaderBackLink />
         {waiting ? (
           <LoadingState kind="reader" />
         ) : (
@@ -512,10 +542,7 @@ export default function NoteDetail() {
 
   return (
     <AppLayout reader>
-      <Link to="/" className="back-line">
-        <ArrowLeft size={19} />
-        返回笔记库
-      </Link>
+      <ReaderBackLink />
       <header className="note-heading">
         <div className="min-w-0">
           <h1>{note.title}</h1>
