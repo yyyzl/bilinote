@@ -243,6 +243,15 @@
   .back-line {
     @apply mb-[26px] inline-flex min-h-8 items-center gap-3 text-base text-ink-600 hover:text-primary-700;
   }
+  .reader-back-link {
+    @apply sticky z-20 flex min-h-11 w-max rounded-lg bg-canvas-50 px-3;
+    top: max(12px, env(safe-area-inset-top, 0px));
+    transition-property: none;
+  }
+  .reader-back-link-hidden:not(:focus-visible) {
+    opacity: 0;
+    pointer-events: none;
+  }
   .note-heading {
     @apply flex items-start justify-between gap-6;
   }
