@@ -184,6 +184,7 @@ export default function Modal({
 
 - 页面使用 `components/AppLayout.tsx`：顶栏在桌面和手机统一提供品牌与设置工具，设置页改为返回笔记库。仅一个内容库时不保留侧栏、重复库导航项或底部导航。正文居中，最大外宽 1344px、桌面左右内距 32px；手机左右 16px。
 - 阅读页传 `reader`，手机保留内容操作栏并为它预留底部安全区；普通页面不再为导航预留 100px。HashRouter 内的目录使用 `scrollIntoView`，不要使用会改写路由的 fragment 链接。
+- 阅读返回入口位于 `AppLayout` 的可选 `readerNavigation` 槽位中，整行吸顶导航始终占相同高度；回滑或键盘聚焦时显示链接，下滑时仅收起链接。目录吸顶位置和 Markdown 标题的 `scroll-margin-top` 必须计入导航高度及顶部安全区，避免章节跳转被遮挡。`scripts/verify-reader-scroll.cjs` 覆盖桌面、手机、滚动和键盘。
 - 笔记列表不依赖封面、不在标题前填装饰图标。`lib/note-preview.ts::getNotePreview(note)` 优先 `preview`，回退可读转录；UI 单行省略，保存完整文字。
 - 设置按视频转录、AI 笔记生成分两栏，自动产物开关属于 AI 栏；640px 以下垂直排列。
 - Summary-template management is a full-width local Settings view, not a new top-level route. Keep its entry/default selector in the AI group; use a bounded 480px desktop library and a labeled mobile editing selector. Editing selection must not change the generation default. Reuse the parent's Save action and ConfirmModal; source built-in text/limits from backend metadata.

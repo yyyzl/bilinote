@@ -5,11 +5,13 @@ import { ArrowLeft, Settings } from "lucide-react";
 interface AppLayoutProps {
   children: ReactNode;
   reader?: boolean;
+  readerNavigation?: ReactNode;
 }
 
 export default function AppLayout({
   children,
   reader = false,
+  readerNavigation,
 }: AppLayoutProps) {
   const location = useLocation();
   const isSettings = location.pathname === "/settings";
@@ -31,6 +33,7 @@ export default function AppLayout({
           </Link>
         </div>
       </header>
+      {readerNavigation}
       <main className={`workspace-main ${reader ? "workspace-reader" : ""}`}>
         {children}
       </main>
