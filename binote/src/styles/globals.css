@@ -6,6 +6,7 @@
   :root {
     color-scheme: light;
     --safe-area-top: max(env(safe-area-inset-top, 0px), 12px);
+    --reader-navigation-height: 56px;
     --color-ink: 21 39 29;
     --color-primary: 79 124 66;
   }
@@ -243,10 +244,23 @@
   .back-line {
     @apply mb-[26px] inline-flex min-h-8 items-center gap-3 text-base text-ink-600 hover:text-primary-700;
   }
+  .reader-navigation {
+    @apply sticky top-0 z-20 border-b border-ink-100 bg-white;
+    padding-top: env(safe-area-inset-top, 0px);
+  }
+  .reader-navigation-inner {
+    @apply mx-auto flex max-w-[1344px] items-center gap-5 px-8;
+    min-height: var(--reader-navigation-height);
+  }
   .reader-back-link {
-    @apply sticky z-20 flex min-h-11 w-max rounded-lg bg-canvas-50 px-3;
-    top: max(12px, env(safe-area-inset-top, 0px));
+    @apply mb-0 min-h-11;
     transition-property: none;
+  }
+  .reader-navigation-divider {
+    @apply h-5 border-l border-ink-100;
+  }
+  .reader-navigation-title {
+    @apply text-sm text-ink-500;
   }
   .reader-back-link-hidden:not(:focus-visible) {
     opacity: 0;
@@ -280,13 +294,17 @@
     @apply text-2xl font-semibold;
   }
   .reader-toc {
-    @apply sticky top-6 p-5;
+    @apply sticky p-5;
+    top: calc(var(--reader-navigation-height) + env(safe-area-inset-top, 0px) + 24px);
   }
   .reader-toc a {
     @apply block border-l-2 border-ink-100 py-2 pl-4 text-sm leading-6 text-ink-500 hover:border-primary-300 hover:text-primary-700;
   }
   .summary-content {
     @apply prose max-w-none break-words text-ink-600 prose-headings:scroll-mt-6 prose-headings:font-sans prose-headings:font-semibold prose-headings:text-ink-900 prose-h2:text-2xl prose-h3:text-xl prose-p:leading-8 prose-li:leading-8 prose-strong:text-ink-900 prose-a:text-primary-600 prose-blockquote:border-primary-300 prose-blockquote:bg-primary-50 prose-blockquote:px-5 prose-blockquote:py-1 prose-pre:bg-canvas-100 prose-pre:text-ink-800;
+  }
+  .summary-content :is(h1, h2, h3) {
+    scroll-margin-top: calc(var(--reader-navigation-height) + env(safe-area-inset-top, 0px) + 24px);
   }
   .summary-content table {
     @apply block overflow-x-auto;
@@ -364,7 +382,8 @@
   .workspace-main {
     padding: 24px;
   }
-  .app-header-inner {
+  .app-header-inner,
+  .reader-navigation-inner {
     padding-inline: 24px;
   }
   .page-header h1 {
@@ -403,6 +422,9 @@
   }
   .app-header-inner {
     min-height: 64px;
+    padding-inline: 16px;
+  }
+  .reader-navigation-inner {
     padding-inline: 16px;
   }
   .brand {

@@ -33,6 +33,30 @@ async function backState(page) {
   });
 }
 
+async function navigationState(page) {
+  return page.locator(".reader-navigation").evaluate((navigation) => {
+    const rect = navigation.getBoundingClientRect();
+    const title = navigation.querySelector(".reader-navigation-title");
+    const titleRect = title.getBoundingClientRect();
+    const link = navigation.querySelector("a.back-line");
+    const style = getComputedStyle(navigation);
+    const hit = document.elementFromPoint(innerWidth / 2, rect.top + rect.height / 2);
+    return {
+      top: rect.top,
+      bottom: rect.bottom,
+      width: rect.width,
+      viewportWidth: document.documentElement.clientWidth,
+      height: rect.height,
+      position: style.position,
+      background: style.backgroundColor,
+      linkBackground: getComputedStyle(link).backgroundColor,
+      titleVisible: getComputedStyle(title).visibility === "visible" && titleRect.width > 0,
+      titleLeft: titleRect.left,
+      coversFullRow: Boolean(hit && navigation.contains(hit)),
+    };
+  });
+}
+
 (async () => {
   const browser = await chromium.launch(launchOptions);
   const results = [];
@@ -63,6 +87,14 @@ async function backState(page) {
       await page.locator("[data-note-row]").first().getByRole("heading").click();
       await page.locator(".summary-content").waitFor();
       assert.ok((await backState(page)).visible, "顶部显示原有返回入口");
+      assert.equal(await page.locator(".reader-navigation").count(), 1, "阅读页返回入口应位于独立导航栏");
+      const initialNav = await navigationState(page);
+      assert.equal(initialNav.position, "sticky", "导航栏应吸附在视口顶部");
+      assert.ok(Math.abs(initialNav.width - initialNav.viewportWidth) <= 1, "导航栏应铺满视口宽度");
+      assert.ok(initialNav.height >= 44, "导航栏应为触摸操作留出空间");
+      assert.equal(initialNav.background, "rgb(255, 255, 255)", "使用统一白色导航背景");
+      assert.equal(initialNav.linkBackground, "rgba(0, 0, 0, 0)", "返回入口不使用突兀的独立底色");
+      assert.ok(initialNav.titleVisible, "导航栏显示笔记详情上下文");
 
       for (const tab of ["AI 总结", "原始转录"]) {
         await page.getByRole("tab", { name: tab, exact: true }).click();
@@ -70,11 +102,19 @@ async function backState(page) {
         assert.ok(bottom > 1000, "使用真实长正文触发窗口滚动");
         const downState = await backState(page);
         assert.equal(downState.visible, false, `${width}px ${tab}：向下阅读时收起入口 ${JSON.stringify(downState)}`);
+        const downNav = await navigationState(page);
+        assert.ok(Math.abs(downNav.top) <= 1 && downNav.coversFullRow, "滚动后独立导航栏应完整占据顶部一行");
+        assert.ok(downNav.titleVisible, "返回入口收起后保留笔记详情标题");
+        assert.equal(downNav.height, initialNav.height, "入口收起时导航栏高度保持不变");
+        assert.equal(downNav.titleLeft, initialNav.titleLeft, "入口显隐不改变导航布局");
         await scroll(page, bottom - 1);
         const state = await backState(page);
         assert.ok(state.visible && state.interactive, `${width}px ${tab}：底部回滑 1 像素立即显示并可点击`);
         assert.equal(state.y, bottom - 1, "返回入口不改变滚动位置");
         assert.ok(state.height >= 44, "保留至少 44px 的触摸区域");
+        const upNav = await navigationState(page);
+        assert.equal(upNav.height, downNav.height, "回滑显示入口时导航栏高度保持不变");
+        assert.equal(upNav.titleLeft, downNav.titleLeft, "回滑显示入口不挤动导航标题");
         await page.evaluate(() => dispatchEvent(new Event("scroll")));
         assert.ok((await backState(page)).visible, "相同位置的滚动事件不收起入口");
         await page.screenshot({ path: path.join(output, `reader-back-${width}-${tab === "AI 总结" ? "summary" : "transcript"}.png`), animations: "disabled" });
@@ -87,7 +127,27 @@ async function backState(page) {
         assert.equal((await backState(page)).visible, false);
         await scroll(page, Math.floor(bottom / 2) + 9);
         assert.ok((await backState(page)).visible, "中部反向滚动 1 像素显示");
+        await page.screenshot({ path: path.join(output, `reader-navigation-${width}-${tab === "AI 总结" ? "summary" : "transcript"}-mid.png`), animations: "disabled" });
         assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false);
+        if (width === 1440 && tab === "AI 总结") {
+          await scroll(page, 0);
+          await page.locator(".reader-toc nav button").nth(5).click();
+          await page.waitForFunction(() => {
+            const navigation = document.querySelector(".reader-navigation");
+            const heading = [...document.querySelectorAll(".summary-content h2")]
+              .find((item) => item.textContent === "阅读章节 6");
+            if (!navigation || !heading) return false;
+            const navBottom = navigation.getBoundingClientRect().bottom;
+            const headingTop = heading.getBoundingClientRect().top;
+            return headingTop >= navBottom - 1 && headingTop <= navBottom + 64;
+          });
+          const geometry = await page.evaluate(() => ({
+            navBottom: document.querySelector(".reader-navigation").getBoundingClientRect().bottom,
+            tocTop: document.querySelector(".reader-toc").getBoundingClientRect().top,
+          }));
+          assert.ok(geometry.tocTop >= geometry.navBottom, "右侧目录不应被顶部导航栏遮住");
+          results.push("桌面目录：章节跳转与目录本身均不被顶部导航遮挡");
+        }
         results.push(`${width}px ${tab}：顶部、底部/中部回滑 1px、继续下滑、无位移/横向溢出`);
       }
 

@@ -93,14 +93,20 @@ function ReaderBackLink() {
   }, []);
 
   return (
-    <Link
-      to="/"
-      className={`back-line reader-back-link${visible ? "" : " reader-back-link-hidden"}`}
-      onFocus={() => setVisible(true)}
-    >
-      <ArrowLeft size={19} aria-hidden="true" />
-      返回笔记库
-    </Link>
+    <nav className="reader-navigation" aria-label="笔记导航">
+      <div className="reader-navigation-inner">
+        <Link
+          to="/"
+          className={`back-line reader-back-link${visible ? "" : " reader-back-link-hidden"}`}
+          onFocus={() => setVisible(true)}
+        >
+          <ArrowLeft size={19} aria-hidden="true" />
+          返回笔记库
+        </Link>
+        <span className="reader-navigation-divider" aria-hidden="true" />
+        <span className="reader-navigation-title">笔记详情</span>
+      </div>
+    </nav>
   );
 }
 
@@ -456,8 +462,7 @@ export default function NoteDetail() {
   if (!note || note.id !== id) {
     const waiting = !loaded || Boolean(note && note.id !== id);
     return (
-      <AppLayout reader>
-        <ReaderBackLink />
+      <AppLayout reader readerNavigation={<ReaderBackLink />}>
         {waiting ? (
           <LoadingState kind="reader" />
         ) : (
@@ -541,8 +546,7 @@ export default function NoteDetail() {
   );
 
   return (
-    <AppLayout reader>
-      <ReaderBackLink />
+    <AppLayout reader readerNavigation={<ReaderBackLink />}>
       <header className="note-heading">
         <div className="min-w-0">
           <h1>{note.title}</h1>
